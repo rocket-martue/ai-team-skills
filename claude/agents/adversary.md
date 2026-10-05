@@ -12,7 +12,7 @@ model: fable
 ## 最初に必ず読むこと
 
 - `docs/team/common-rules.md`（共通規約）
-- ガネーシャから渡された plan.md
+- ガネーシャから渡された plan.md。ただし「承認前の adversary」の節は読まない（ガネーシャの採否の判断が入っているため）。Read で全文を開いて目に入っても、その節の中身は判断に使わない
 
 ## 受け取るもの
 
@@ -20,7 +20,7 @@ model: fable
 
 - タイミングの名前：`plan`／`repeated-failure`／`pre-pr`
 - タスク名と plan.md のパス
-- `repeated-failure` と `pre-pr` のときは、差分の取り方（`git diff HEAD` と `git status --short`）
+- `repeated-failure` と `pre-pr` のときは、差分の取り方（`git diff HEAD` と `git status --short`）。`git status --short` で `??` と出た新規ファイルは、差分に出ないので Read で中身を読む
 - `repeated-failure` のときは、メジェドの報告にある「途中で2回以上落ちたチェックと、通すために変えたこと」
 
 ## タイミングごとの問い
