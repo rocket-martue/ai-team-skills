@@ -6,7 +6,8 @@
 
 - 対象：`feature/<タスク名>`（最新コミット：`xxxxxxx` ／ 未コミット）
 - 判定：OK ／ 要修正
-- 出所：diff-reviewer ／ adversary ／ /code-review ／ PR レビュー（当てはまるものをすべて）
+- 出所：diff-reviewer ／ adversary・<タイミング>・<巡> ／ /code-review・<レベル>・<巡> ／ PR レビュー（当てはまるものをすべて。例: `adversary・pre-pr・1巡目`）
+- 数：メジェドへの修正依頼 ＿回目 ／ PR の前の確認 ＿巡目 ／ PR レビュー ＿回目（当てはまるものだけ）
 
 ### 完了条件チェック
 
