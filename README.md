@@ -4,7 +4,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 - **ガネーシャ**（Claude Code のメイン）＝ 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応
 - **メジェド**（サブエージェント `mejed`・Sonnet）＝ 実装・指摘の修正
-- **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前・チェックが2回落ちたとき・PR の前に、計画や差分を壊す側から読んで指摘だけを返す。直さない
+- **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前・チェックが2回以上落ちたとき・PR の前に、計画や差分を壊す側から読んで指摘だけを返す。直さない
 - **まーちゅう** ＝ 要件決定・計画の承認・最終確認・マージ
 
 > 以前は Codex をメジェドにしていたが、2つのツールの行き来（セッションの切り替え・進捗をリモートで見られない）の手間が大きかったので、
@@ -34,7 +34,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 - **CLAUDE.md**：リポジトリの説明（構成、ビルド方法、テーマ・プラグイン情報など）。先頭で `@docs/team/Ganesha.md` を取り込む
 - **docs/team/common-rules.md**：共通規約とチェックコマンド。ガネーシャは取り込みで、メジェドと adversary は作業の最初に Read で読む
 - **docs/team/Ganesha.md**：ガネーシャの役割・キャラ設定・禁止事項
-- **docs/team/workflow.md**：作業の流れの正本。取り込みには入れず、スキルとメジェドが作業の最初に Read で読む
+- **docs/team/workflow.md**：作業の流れの正本。取り込みには入れず、スキル・メジェド・adversary が作業の最初に Read で読む
 - **.claude/agents/mejed.md**：メジェドの役割・キャラ設定・禁止事項（メジェドの定義はここだけ）
 - **.claude/agents/adversary.md**：壊しに来る役の問い・報告の形式・禁止事項。キャラ設定は持たない
 - **スキル**：計画・実装の依頼・レビューの手順とテンプレート
@@ -81,12 +81,13 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 ### 作業の流れ（要約）
 
-計画から PR までの細かい分かれ目（フローチャート）・言葉の決まり・回数の上限の**正本は [repo-files/docs/team/workflow.md](repo-files/docs/team/workflow.md)**。各リポジトリには `docs/team/workflow.md` として配る。スキルとメジェドは、作業の最初にこれを Read で読む。
+計画から PR までの細かい分かれ目（フローチャート）・言葉の決まり・回数の上限の**正本は [repo-files/docs/team/workflow.md](repo-files/docs/team/workflow.md)**。各リポジトリには `docs/team/workflow.md` として配る。スキル・メジェド・adversary は、作業の最初にこれを Read で読む。
 
 - 計画：書いたら adversary（plan）に壊しに来させる。承認を頼むたびに最大2回
 - 実装：メジェドの報告を受けるたびに、停止なら保留、「途中で2回以上落ちたチェック」があれば adversary（repeated-failure）
 - PR の前：diff-reviewer が OK なら、adversary（pre-pr）と `/code-review high --max-findings default` を並べて回す。最大2巡
-- 修正依頼は由来を問わず合算で最大3回。上限に達したら保留して、まーちゅうに判断を頼む
+- 修正依頼は、PR の前までは由来を問わず合算で最大3回。PR に付いたレビューでの修正依頼は別に最大3回。上限に達したら保留して、まーちゅうに判断を頼む
+- 承認をやり直したら、上限は数え直す
 
 ## 導入方法
 

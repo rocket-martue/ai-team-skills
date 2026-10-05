@@ -14,7 +14,7 @@
 - 計画担当：`plan-writer` スキルで plan.md を作る
 - 実装の依頼：`delegate-to-mejed` スキルで、サブエージェントの `mejed` に実装を任せ、レビュー→修正を回す
 - レビュー担当：`diff-reviewer` スキルで差分をレビューし、review.md に書く
-- 壊しに来る役の呼び出し：計画の承認前（`plan-writer`）・チェックが2回落ちたとき・PR の前（`delegate-to-mejed`）に、サブエージェントの `adversary` を呼ぶ。自分の結論は渡さず、返ってきた指摘は一次データで確かめてから採る
+- 壊しに来る役の呼び出し：計画の承認前（`plan-writer`）・チェックが2回以上落ちたとき・PR の前（`delegate-to-mejed`）に、サブエージェントの `adversary` を呼ぶ。自分の結論は渡さず、返ってきた指摘は一次データで確かめてから採る
 - PR 担当：まーちゅうに頼まれたら、コミット・push・PR 作成を行う（`delegate-to-mejed` の手順8）
 - PR レビュー担当：PR に付いた指摘（Copilot・人）を検証して review.md に書き、スレッドに返信する（`diff-reviewer` スキルの「PR に付いたレビュー」）
 

@@ -139,3 +139,91 @@ README「作業の流れ」のフローチャート（正本）の分かれ目�
 ### 指摘
 
 なし
+
+## 第4回（2026-10-05・PR の前の確認）
+
+- 対象：`chore/4-adversary`（最新コミット：`d3ccbc5`。`origin/main...HEAD` の3コミット・未コミットなし）
+- 判定：要修正
+- 出所：adversary・pre-pr・1巡目 ／ /code-review・high・1巡目
+- 数：PR の前の確認 1巡目（承認依頼2で数え直した）。このタスクにメジェドの修正依頼は無い
+- 訂正：第3回に「次は2巡目を回す」と書いたのは誤り。承認依頼2で承認をやり直したので、上限は数え直しになり、この回は1巡目（adversary の指摘で分かった）
+
+### 指摘
+
+| # | 重要度 | ファイル:行 | 問題と理由 | 修正方針 | 対応 | 再レビュー |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 必須 | `claude/skills/diff-reviewer/SKILL.md:22` | 手順5が「次の手は手順6」と決め打ちなので、PR の前の確認の指摘を受けた回も手順6（修正依頼）に流れ、V3 の「2巡目で必須なら直さずに保留」を通らない（/code-review） | PR の前の確認から来た回は、delegate-to-mejed の「PR の前の確認」の4に返す、と分ける | 第5回で直した（ガネーシャ） | 解決 |
+| 2 | 必須 | `claude/agents/adversary.md:23` | `??` の新規ファイルを読むと、まだコミットしていない `docs/tasks/<タスク名>/review.md`（ガネーシャの判定・採否）も読む。「結論や見立ては受け取らない」に反する（/code-review） | `??` の新規ファイルのうち `docs/tasks/<タスク名>/review.md` は読まない | 第5回で直した（ガネーシャ） | 解決 |
+| 3 | 必須 | `claude/skills/plan-writer/templates/plan.md` の「確認事項」 | 空の `-` は「なし」でも「→ 付き」でもないので、確認事項の無い計画が Q1 で保留になる（adversary・/code-review） | テンプレートの既定を「- なし」にし、plan-writer に「不明点が無ければ『なし』と書く」を足す | 第5回で直した（ガネーシャ） | 解決 |
+| 4 | 必須 | `repo-files/docs/team/workflow.md`（V1・言葉の決まり） | V1 の「plan.md の本文」が定義されていない。承認前の記録を書き込むだけでも本文が変わったと読める（adversary） | 言葉の決まりに「本文」＝「承認前の adversary」「改訂履歴」「確認事項」以外の節、を足す | 第5回で直した（ガネーシャ） | 解決 |
+| 5 | 必須 | `repo-files/docs/team/workflow.md`（確認事項の未解決） | Q1 で保留した後、まーちゅうの答えを誰がどう書くか決まっていない。ガネーシャが「→ 案：」と書けば、答えていないのに通る（/code-review） | 「まーちゅうの答えをガネーシャが『→』で書き足すのは改訂に当たらない（確認事項は本文に入らない）。ガネーシャ自身の案を『→』で書かない」を足す | 第5回で直した（ガネーシャ） | 解決 |
+| 6 | 推奨 | `claude/agents/mejed.md:34` | 手順5（計画どおりでは実装できない）だけ、報告の形式で「結果：停止」と書く形になっていない。「指摘を修正するとき」にも計画を変えないと直せないときの停止が無い（adversary・/code-review） | 両方とも「報告の形式で『結果：停止（理由）』と報告して終わる」にする | 第5回で直した（ガネーシャ） | 解決 |
+| 7 | 推奨 | `claude/skills/delegate-to-mejed/SKILL.md:89` 以下 | 回数の上限の表が workflow.md の写しで、すでにずれている（2巡目の条件・`--max-findings`・PR レビューの行が無い）。手順1の確認事項の基準も言い換えて写している（/code-review） | 表を消して「workflow.md の『回数の上限』に従う」の1文にする。手順1・mejed.md の手順2も、基準は workflow.md を指すだけにする | 第5回で直した（ガネーシャ） | 解決 |
+| 8 | 推奨 | `claude/agents/adversary.md:14` | adversary の「最初に必ず読むこと」に workflow.md が無い。「2回以上落ちたチェック」や「中身の指摘」の定義が届かない（/code-review） | 「最初に必ず読むこと」に workflow.md を足す。README のファイルの分け方も「スキル・メジェド・adversary が読む」にそろえる | 第5回で直した（ガネーシャ） | 解決 |
+| 9 | 推奨 | `repo-files/docs/team/Ganesha.md:17` ほか | 「チェックが2回落ちたとき」と書いていて、正本の「2回以上」とずれる（/code-review） | Ganesha.md・common-rules.md・README・adversary.md の description を「2回以上」にそろえる | 第5回で直した（ガネーシャ） | 解決 |
+| 10 | 推奨 | `README.md:89` | 要約の「修正依頼は由来を問わず合算で最大3回」から「PR の前まで」が落ち、PR に付いたレビューの別枠が読めない（adversary） | 「PR の前までは合算で最大3回。PR に付いたレビューは別に最大3回」にする | 第5回で直した（ガネーシャ） | 解決 |
+| 11 | 推奨 | `claude/skills/diff-reviewer/templates/review.md:8` | 判定の選択肢が「OK ／ 要修正」だけで、「保留」が無い（adversary） | 「OK ／ 要修正 ／ 保留」にする | 第5回で直した（ガネーシャ） | 解決 |
+| 12 | 推奨 | `claude/skills/diff-reviewer/SKILL.md:16` | PR に付いたレビューでメジェドに直させた後（未コミット）の差分の取り方が決まっていない（/code-review） | 手順2に「PR に付いたレビューの修正の後も、コミット前の取り方」を足す | 第5回で直した（ガネーシャ） | 解決 |
+
+### 見送った指摘（あれば）
+
+- 改訂履歴と確認事項からも、ガネーシャの採否の判断が adversary に伝わる（/code-review）→ 改訂履歴は要る。2回目は「1回目の直しが正しいか」を見る回でもあるので、限界として承知する
+- 保留して承認をやり直した後に delegate-to-mejed を頭から回すと、手順2（main にいる・未コミットの変更が無い）とぶつかる（adversary）→ 保留の後の進め方はまーちゅうの指示で決める、と計画でわざと外した部分（plan.md の改訂履歴・3回目）
+
+### 計画への指摘（あれば）
+
+- なし（#5 は「確認事項は本文に入らない」の定義から出る決まりなので、計画の範囲として扱った。まーちゅう確認済み）
+
+## 第5回（2026-10-05・第4回の指摘を直した後）
+
+- 対象：`chore/4-adversary`（最新コミット：`d3ccbc5` ／ 未コミットの直しあり）
+- 判定：OK
+- 出所：diff-reviewer（ガネーシャ自身。第4回の指摘の解決と、突き合わせの表の更新）
+- 数：PR の前の確認は1巡目が済んだ（承認依頼2で数え直した後）。1巡目で中身の指摘を直したので、次は2巡目を回す
+
+### 第4回の指摘の解決
+
+| # | 対応 | 再レビュー |
+| --- | --- | --- |
+| 1 | diff-reviewer の手順5を、ふつうの回は手順6、PR の前の確認の指摘を受けた回は「PR の前の確認」の4、と分けた | 解決 |
+| 2 | adversary は `??` の新規ファイルのうち `docs/tasks/<タスク名>/review.md` を読まない | 解決 |
+| 3 | テンプレートの確認事項の既定を「- なし」にし、plan-writer の手順5に「不明点が無ければ『なし』と書く」「答えは『→』で書き足す」を足した | 解決 |
+| 4 | workflow.md の言葉の決まりに「本文」の定義を足した | 解決 |
+| 5 | workflow.md に「まーちゅうの答えをガネーシャが『→』で書き足すのは改訂に当たらない」「自分の案を『→』で書かない」を足した | 解決 |
+| 6 | mejed.md の手順5と「指摘を修正するとき」の4を、報告の形式で「結果：停止（理由）」にした | 解決 |
+| 7 | delegate-to-mejed の上限の表を消して「workflow.md の『回数の上限』に従う」の1文にした。手順1と mejed.md の手順2の基準の言い換えも、workflow.md を指すだけにした | 解決 |
+| 8 | adversary の「最初に必ず読むこと」に workflow.md を足し、README も「スキル・メジェド・adversary が読む」にそろえた | 解決 |
+| 9 | Ganesha.md・common-rules.md・README・adversary.md を「2回以上落ちたとき」にそろえた（`grep` で「2回落ちた」の残りは0件） | 解決 |
+| 10 | README の要約を「PR の前までは合算で最大3回。PR に付いたレビューは別に最大3回」にし、「承認をやり直したら数え直す」も足した | 解決 |
+| 11 | review.md のテンプレートの判定を「OK ／ 要修正 ／ 保留」にした | 解決 |
+| 12 | diff-reviewer の手順2のコミット前の取り方に「PR に付いたレビューの修正をメジェドがした後」を足した | 解決 |
+
+### フローチャートの分かれ目とスキルの文の突き合わせ（第3回の表を置き換える）
+
+正本は `repo-files/docs/team/workflow.md`。行番号はこの回の時点のもの。
+
+| 分かれ目（ノード） | 内容 | 対応する文 |
+| --- | --- | --- |
+| （全体） | スキル・メジェド・adversary が最初に workflow.md を読む | `claude/skills/plan-writer/SKILL.md:10`、`claude/skills/delegate-to-mejed/SKILL.md:10`、`claude/skills/diff-reviewer/SKILL.md:10`、`claude/agents/mejed.md:16`、`claude/agents/adversary.md:15` |
+| A1・V1 | 承認前の adversary。2回目は1回目の指摘で本文を直したときだけ | `claude/skills/plan-writer/SKILL.md:22`・`:33`（本文の定義は workflow.md の言葉の決まり） |
+| U1 →「もう1回」 | まーちゅうに頼まれた分は上限の外 | `claude/skills/plan-writer/SKILL.md:34` |
+| Q1 | 承認の後、確認事項に未解決が残っていれば保留 | `claude/skills/delegate-to-mejed/SKILL.md:15`、`claude/agents/mejed.md:31`、`claude/skills/plan-writer/SKILL.md:18`（「なし」と書く・答えは「→」） |
+| S1 →「停止」→ H | 停止なら保留（理由を添える） | `claude/skills/delegate-to-mejed/SKILL.md:50`・`:44`、`claude/agents/mejed.md:30`・`:31`・`:34`・`:43`・`:59` |
+| R1 →「行が無い」→ RW | 報告ごとに1回だけ、同じメジェドに SendMessage で書き直させる。それでも無ければ保留 | `claude/skills/delegate-to-mejed/SKILL.md:52` |
+| R1 →「なし」→ D1 | そのまま diff-reviewer へ | `claude/skills/delegate-to-mejed/SKILL.md:53` |
+| R1 →「あり」→ A2 | repeated-failure の adversary を呼んでから diff-reviewer へ | `claude/skills/delegate-to-mejed/SKILL.md:54`、`claude/agents/adversary.md:33` |
+| R1 の粒度 | チェックコマンドの箇条1つが1回の作業の中で2回以上失敗 | `claude/skills/delegate-to-mejed/SKILL.md:56`、`claude/agents/mejed.md:52` |
+| D1 →「計画に効く指摘」→ H | 保留 | `claude/skills/delegate-to-mejed/SKILL.md:30`、`claude/skills/diff-reviewer/SKILL.md:49` |
+| D1 →「要修正」→ L1 | 修正依頼は合算で3回未満なら直させる。3回なら保留 | `claude/skills/delegate-to-mejed/SKILL.md:31`・`:91`、`claude/skills/diff-reviewer/SKILL.md:50` |
+| D1 の後 | diff-reviewer は delegate-to-mejed の途中なら止まらずに続ける。PR の前の確認の回は V3 に返す | `claude/skills/diff-reviewer/SKILL.md:22` |
+| C1 | 1巡目がまだ／前の巡で中身の指摘を直し2巡目がまだ／それ以外 | `claude/skills/delegate-to-mejed/SKILL.md:74`・`:75`・`:76` |
+| X | adversary（pre-pr）と `/code-review high --max-findings default` を並べる | `claude/skills/delegate-to-mejed/SKILL.md:80`・`:81` |
+| W | 採る指摘が無くても review.md に回を書く（出所・数・見送り） | `claude/skills/delegate-to-mejed/SKILL.md:82`、`claude/skills/diff-reviewer/SKILL.md:57`・`:58`・`:59` |
+| V3 | なし→報告／計画に効く→保留／2巡目の必須→保留／それ以外→L1 | `claude/skills/delegate-to-mejed/SKILL.md:84`〜`:87` |
+| U2 | 「いいえ」なら指示を待つ | `claude/skills/delegate-to-mejed/SKILL.md:37` |
+| 回数の上限 | workflow.md の表に従う（スキルには写さない） | `claude/skills/delegate-to-mejed/SKILL.md:91` |
+| PR に付いたレビュー | 修正依頼は最大3回。メジェドに直させたら delegate-to-mejed の手順どおりに報告を見る。差分はコミット前の取り方 | `claude/skills/diff-reviewer/SKILL.md:50`・`:70`・`:16` |
+
+### 指摘
+
+なし
