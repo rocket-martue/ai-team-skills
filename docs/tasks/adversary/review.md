@@ -227,3 +227,60 @@ README「作業の流れ」のフローチャート（正本）の分かれ目�
 ### 指摘
 
 なし
+
+## 第6回（2026-10-05・PR の前の確認）
+
+- 対象：`chore/4-adversary`（最新コミット：`c509cb3`。`origin/main...HEAD` の4コミット・未コミットなし）
+- 判定：保留（計画に効く指摘がある。2巡目でもある）
+- 出所：adversary・pre-pr・2巡目 ／ /code-review・high・2巡目
+- 数：PR の前の確認 2巡目（承認依頼2で数え直した後）。上限に達した
+- 補足：1回目の実行は使用量の上限で途中で止まり、上限が戻ってから同じ依頼で回し直した
+
+### 指摘（直さずに保留。採るかどうかと直し方は、まーちゅうの判断の後に決める）
+
+| # | 重要度 | ファイル:行 | 問題と理由 | 出所 |
+| --- | --- | --- | --- | --- |
+| 1 | 必須（計画に効く） | `repo-files/docs/team/workflow.md:56`〜`:57` | 「→」で答えが書かれれば解決で、書き足しは改訂に当たらない。答えが計画を変えるもの（例「A か B か」→「B で」）でも P1 に戻らないので、メジェドは本文どおり A を作り、答えが実装されない | /code-review |
+| 2 | 必須 | `claude/skills/plan-writer/SKILL.md:22` | 改訂を頼まれたら必ず承認欄を外して adversary を回し直す、のまま。workflow.md の「承認をやり直すのは本文が変わったときだけ」「確認事項の答えの書き足しは改訂に当たらない」と食い違う。外すと上限も数え直しになる | /code-review |
+| 3 | 推奨 | `claude/agents/adversary.md:24` | review.md を読まない規則が `??` の文の中にあるので、review.md がコミット済み（PR レビューの段など）だと `git diff HEAD` 経由でガネーシャの判定と採否が渡る | adversary・/code-review |
+| 4 | 推奨 | `repo-files/docs/team/workflow.md:56` | 未解決の基準が字面だけで、「- なし（注記）」は未解決扱い、「→ 後で決める」や質問文の中の「→」は解決扱いになる。hub には子の箇条で「**→ 決定：案A**」と書く例もある | adversary |
+| 5 | 推奨 | `claude/skills/delegate-to-mejed/SKILL.md:31`・`:87`、`claude/skills/diff-reviewer/SKILL.md:50`、`claude/skills/plan-writer/SKILL.md:33`、README | 「上限は写さない」と書いたのに、数字（3回・2回・2巡）や定義（停止・保留・中身の指摘・2回以上落ちたチェック）がスキルに写っている | adversary・/code-review |
+| 6 | 推奨 | `repo-files/docs/team/workflow.md:54`、`claude/skills/delegate-to-mejed/SKILL.md:50` | 停止の理由の一覧に、mejed.md の「計画どおりでは直せない」が無い | /code-review |
+| 7 | 推奨 | `README.md:77` | 「チェックが2回落ちていたら」が残っている（第4回 #9 の grep の語が「2回落ちた」で、当たらなかった） | /code-review |
+| 8 | 推奨 | 各スキルと mejed.md・adversary.md の「最初に workflow.md を読む」 | workflow.md が無いとき（`claude/` だけ反映して `repo-files/` を置いていない、今の4リポジトリの状態）の振る舞いが決まっていない | adversary |
+| 9 | 推奨 | `claude/skills/diff-reviewer/templates/review.md:10` | 「数」に、どの承認依頼の数かを書く欄が無い。数え直しの後に読み違える（この review.md の第3回の誤りが実例） | /code-review |
+| 10 | 推奨 | `repo-files/docs/team/workflow.md:59` | 「本文」の定義で、計画書の冒頭（作成・承認・ブランチ・改訂履歴の箇条）がどちらに入るか決まっていない | /code-review |
+| 11 | 推奨 | `claude/skills/delegate-to-mejed/SKILL.md:87` | V3 の「上以外であり」は、採った指摘が推奨だけでも修正依頼に回り、上限を1回使う。C1 の「中身の指摘を直した」も、推奨を見送られたときに決まらない | /code-review |
+| 12 | 推奨 | `repo-files/docs/team/workflow.md:4` | 「この分かれ目に合わせて書いている文書」の一覧に adversary.md が無い | /code-review |
+| 13 | 推奨（推測） | `claude/agents/adversary.md:24` | 未追跡のディレクトリは `git status --short` で1行に畳まれ、「`??` のファイルを読む」がファイル単位にならない | adversary |
+
+### 見送った指摘（あれば）
+
+- `git status --short` が allow の完全一致に当たらない（adversary）→ #1 の4と同じ件
+
+### 計画への指摘（あれば）
+
+- **計画に効く指摘（保留）**：#1。確認事項の答えが計画を変えるときの扱い（承認依頼2でまーちゅうが決めた「確認事項は本文に入らない・答えの書き足しは改訂に当たらない」の範囲を、答えの中身で分ける必要がある）
+
+## 第7回（2026-10-05・保留の後、まーちゅうの判断で直した）
+
+- 対象：`chore/4-adversary`（最新コミット：`c509cb3` ／ 未コミットの直しあり）
+- 判定：OK（まーちゅうの判断により、PR の前の確認の3巡目は回さない）
+- 出所：diff-reviewer（ガネーシャ自身）
+- 数：PR の前の確認は2巡で上限。第6回の指摘のうち5件を直し、8件はイシューに回した
+- まーちゅうの判断（2026-10-05）：第6回 #1 は「答えが本文の変更を要するなら本文を直す改訂として承認をやり直す」。進め方は「はっきり壊れている・食い違っている5件だけ直し、3巡目を回さずに PR を出す。残りはイシューへ」。workflow.md の「2巡目で必須が出たら直さずに保留」を超えることも了承済み（plan.md「決めたこと」）
+
+### 第6回の指摘の扱い
+
+| # | 扱い | 対応 |
+| --- | --- | --- |
+| 1 | 直した | workflow.md の確認事項の未解決に、答えが本文の変更を要するなら改訂として承認をやり直す、を足した |
+| 2 | 直した | plan-writer の改訂の段落を、本文を直したときだけ承認欄を外す、確認事項の答えの書き足しは改訂に当たらない（本文を変える答えは改訂）、にした |
+| 3 | 直した | adversary.md・delegate-to-mejed の差分の取り方で review.md を外す（`git diff HEAD -- . ":(exclude)docs/tasks/<タスク名>/review.md"`。この作業ツリーで、review.md の変更が除かれることを確かめた） |
+| 6 | 直した | workflow.md の停止の理由に「計画どおりでは直せない」を足し、delegate-to-mejed の一覧の写しは workflow.md を指すだけにした |
+| 7 | 直した | README の「チェックが2回落ちていたら」を「2回以上」にした（「2回落」で広く grep して、残りは0件） |
+| 4・5・8〜13 | イシューへ | 確認事項の基準の境界／数字と定義の写し／workflow.md が無いときの振る舞い／「数」に承認依頼の番号／本文の定義と冒頭の箇条／推奨だけの指摘の扱い／workflow.md の一覧に adversary.md／未追跡のディレクトリ |
+
+### 指摘
+
+なし

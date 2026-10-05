@@ -21,7 +21,8 @@ model: fable
 
 - タイミングの名前：`plan`／`repeated-failure`／`pre-pr`
 - タスク名と plan.md のパス
-- `repeated-failure` と `pre-pr` のときは、差分の取り方（`git diff HEAD` と `git status --short`）。`git status --short` で `??` と出た新規ファイルは、差分に出ないので Read で中身を読む。ただし `docs/tasks/<タスク名>/review.md` は読まない（ガネーシャの判定と採否が入っているため）
+- `repeated-failure` と `pre-pr` のときは、差分の取り方（`git diff HEAD` と `git status --short`）。`git status --short` で `??` と出た新規ファイルは、差分に出ないので Read で中身を読む
+- `docs/tasks/<タスク名>/review.md` は、未追跡でもコミット済みでも読まない（ガネーシャの判定と採否が入っているため）。差分にも出るので、差分は `git diff HEAD -- . ":(exclude)docs/tasks/<タスク名>/review.md"` のように review.md を外して取る
 - `repeated-failure` のときは、メジェドの報告にある「途中で2回以上落ちたチェックと、通すために変えたこと」
 
 ## タイミングごとの問い
