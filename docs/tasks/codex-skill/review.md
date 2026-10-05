@@ -55,3 +55,21 @@
 | mejed.md・adversary.md | ○ | |
 | `repo-files/codex/AGENTS.md`・common-rules.md・README | ○ | |
 | 差分にローカルの絶対パスと契約しているプラン名が無い | ○ | grep で確かめた |
+
+## 第2回（2026-10-05・PR の前の確認）
+
+- 対象：`chore/3-codex-skill`（最新コミット：`13dddfa`）
+- 判定：要修正 → 直した
+- 出所：健さん・review・1巡目（ラッパーの `-Mode review -Base origin/main` で呼んだ。返事は `docs/tasks/codex-skill/codex/09-review.md`。185秒）
+- 数：PR の前の確認 1巡目（#3 の見直しの方向に合わせ、PR の前の確認は健さんに指摘が0になるまで頼む。まーちゅうの指示）
+
+### 指摘
+
+| # | 重要度 | ファイル | 問題と理由 | 対応 | 再レビュー |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 必須 | `claude/skills/codex/scripts/invoke-codex.ps1`（`-Task` の確認） | `-Task .` と `-Task ..` が確認を通り、返事が `docs/tasks/codex/`・`docs/codex/` に保存される。`.gitignore` の `docs/tasks/*/codex/` に当たらず、絶対パス入りの返事を間違ってコミットしうる | タスク名は英数字で始める（`^[A-Za-z0-9][A-Za-z0-9._-]*$`）。`.`・`..`・`../x` が止まり、`ok-1` が通ることを確かめた | 解決 |
+| 2 | 推奨 | 同上（画像のパスの取り出し） | `CODEX_HOME` が UNC パス（`\\server\share\...`）だと取り出せず、画像ができても止まる | ドライブ文字と UNC の両方を拾う正規表現にした。空白入りのドライブのパス・UNC・スラッシュのパスの3つで取り出せることを確かめた | 解決 |
+
+### 見送った指摘（あれば）
+
+- なし

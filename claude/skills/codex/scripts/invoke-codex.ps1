@@ -65,8 +65,9 @@ function Test-SecretPath {
 if ([string]::IsNullOrWhiteSpace($Task)) {
 	Stop-Wrapper '-Task（タスク名）が無いので呼びません。健さんの返事を docs/tasks/<タスク名>/codex/ に残すために必須です。'
 }
-if ($Task -notmatch '^[A-Za-z0-9._-]+$') {
-	Stop-Wrapper "-Task には英数字と . _ - だけを使ってください: $Task"
+# 英数字で始める（`.` や `..` だと保存先が docs/tasks/<タスク名>/codex/ から外れ、.gitignore に当たらなくなるため）
+if ($Task -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+	Stop-Wrapper "-Task は英数字で始め、英数字と . _ - だけを使ってください: $Task"
 }
 
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
@@ -237,7 +238,8 @@ try {
 		$generatedRoot = (Join-Path $codexHome 'generated_images').Replace('/', '\').TrimEnd('\') + '\'
 		$found = $null
 		# パスに空白が入ることがある（ユーザー名や CODEX_HOME）ので、空白は許し、引用符・改行などで区切る
-		$hits = [regex]::Matches($reply, '(?i)([A-Z]:[\\/][^`"''<>|*?\r\n]+?\.(png|jpe?g|webp))')
+		# ドライブ文字（C:\...）と UNC（\\server\share\...）の両方を拾う
+		$hits = [regex]::Matches($reply, '(?i)((?:[A-Z]:[\\/]|\\\\[^\\/\s`"''<>|*?]+[\\/])[^`"''<>|*?\r\n]+?\.(png|jpe?g|webp))')
 		foreach ($m in $hits) {
 			$candidate = $m.Groups[1].Value.Trim()
 			if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
