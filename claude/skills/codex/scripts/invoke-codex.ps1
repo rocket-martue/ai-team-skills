@@ -169,6 +169,7 @@ function Save-Reply {
 }
 
 $exitCode = 0
+$RefOriginals = @()
 try {
 	switch ($Mode) {
 		'consult' {
@@ -201,6 +202,8 @@ try {
 				if ($src -eq '') { continue }
 				$full = if ([System.IO.Path]::IsPathRooted($src)) { $src } else { Join-Path $CallerDirectory $src }
 				if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { Stop-Wrapper "参照画像が見つかりません: $src" }
+				# 元のファイルの場所を控える（前に作った画像を参照に渡したとき、それを今回の出力と取り違えないため）
+				$RefOriginals += (Resolve-Path -LiteralPath $full).Path
 				$i++
 				$ext = [System.IO.Path]::GetExtension($full).ToLowerInvariant()
 				$name = "ref-$i$ext"
@@ -232,22 +235,33 @@ try {
 	Write-Output "SAVED: $saved"
 
 	if ($Mode -eq 'image' -and $exitCode -eq 0) {
-		# 画像のパスは健さんの答えだけから取る（時刻で探すと、同時に別の Codex が作った画像を取り違えるため）
-		# 生成画像の保存先（<CODEX_HOME>/generated_images）の下にある画像だけを選ぶ（参照画像を選ばないため）
+		# 画像のパスは、健さんの答えの「IMAGE_PATH: <絶対パス>」の行だけから取る
+		# （文章から正規表現でパスを探すと、空白・UNC・アポストロフィなどで取りこぼす。時刻で探すと別の依頼の画像を取り違える）
 		$codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $HOME '.codex' } else { $env:CODEX_HOME }
 		$generatedRoot = (Join-Path $codexHome 'generated_images').Replace('/', '\').TrimEnd('\') + '\'
+		$declared = $null
+		foreach ($line in ($reply -split "\r?\n")) {
+			if ($line -match '^\s*IMAGE_PATH:\s*(.+?)\s*$') { $declared = $Matches[1] }
+		}
 		$found = $null
-		# パスに空白が入ることがある（ユーザー名や CODEX_HOME）ので、空白は許し、引用符・改行などで区切る
-		# ドライブ文字（C:\...）と UNC（\\server\share\...）の両方を拾う
-		$hits = [regex]::Matches($reply, '(?i)((?:[A-Z]:[\\/]|\\\\[^\\/\s`"''<>|*?]+[\\/])[^`"''<>|*?\r\n]+?\.(png|jpe?g|webp))')
-		foreach ($m in $hits) {
-			$candidate = $m.Groups[1].Value.Trim()
-			if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
-			$resolved = (Resolve-Path -LiteralPath $candidate).Path
-			if ($resolved.StartsWith($generatedRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $found = $resolved; break }
+		$why = '答えに「IMAGE_PATH: <絶対パス>」の行がありませんでした'
+		if ($null -ne $declared) {
+			# 行全体がバッククォートで囲まれていたら外す（パスの中の引用符には触らない）
+			if ($declared.Length -ge 2 -and $declared.StartsWith('`') -and $declared.EndsWith('`')) { $declared = $declared.Substring(1, $declared.Length - 2) }
+			$why = "IMAGE_PATH の画像が見つかりません: $declared"
+			if (Test-Path -LiteralPath $declared -PathType Leaf) {
+				$resolved = (Resolve-Path -LiteralPath $declared).Path
+				if (-not $resolved.Replace('/', '\').StartsWith($generatedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+					$why = "IMAGE_PATH が生成画像の保存先（$generatedRoot）の下にありません: $resolved"
+				} elseif ($RefOriginals | Where-Object { $_ -ieq $resolved }) {
+					$why = "IMAGE_PATH が今回渡した参照画像と同じです: $resolved"
+				} else {
+					$found = $resolved
+				}
+			}
 		}
 		if ($null -eq $found) {
-			Stop-Wrapper "健さんの答えに、生成画像の保存先（$generatedRoot）の下の、存在する画像の絶対パスがありませんでした。コピーせずに止めてください。" 2
+			Stop-Wrapper "$why。コピーせずに止めてください。" 2
 		}
 		Write-Output "IMAGE: $found"
 	}
