@@ -4,8 +4,8 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 - **ガネーシャ**（Claude Code のメイン）＝ 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応
 - **メジェド**（サブエージェント `mejed`・Sonnet）＝ 実装・指摘の修正
-- **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前・チェックが2回以上落ちたとき・PR の前に、計画や差分を壊す側から読んで指摘だけを返す。直さない
-- **健さん**（Codex CLI・外部委託業者）＝ 読むだけの相談・レビューと、画像の生成。スキル `codex` から呼ぶ。実装は頼まない
+- **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前に、1つの計画につき1回だけ、計画書を壊す側から読んで指摘だけを返す。直さない
+- **健さん**（Codex CLI・外部委託業者）＝ 読むだけの相談・レビューと、画像の生成。スキル `codex` から呼ぶ。実装は頼まない。承認前・チェックが2回以上落ちたとき・PR の前の確認の中心
 - **まーちゅう** ＝ 要件決定・計画の承認・最終確認・マージ
 
 > 以前は Codex をメジェドにしていたが、2つのツールの行き来（セッションの切り替え・進捗をリモートで見られない）の手間が大きかったので、
@@ -23,9 +23,9 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `repo-files/docs/team/workflow.md` | 全員 | リポジトリの `docs/team/workflow.md`。作業の流れ（フローチャート・言葉の決まり・回数の上限）の正本 |
 | `repo-files/CLAUDE.md.snippet` | ガネーシャ | 中身を `CLAUDE.md` の先頭に追記 |
 | `claude/agents/mejed.md` | メジェド | `.claude/agents/mejed.md`。キャラ・手順・報告の形式・禁止事項。モデルは Sonnet |
-| `claude/agents/adversary.md` | adversary | `.claude/agents/adversary.md`。タイミングごとの問い・報告の形式・禁止事項。モデルは Fable |
-| `claude/skills/plan-writer/` | ガネーシャ | `.claude/skills/plan-writer/`。承認を頼む前に adversary を呼ぶ |
-| `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を最大3回回す。PR の前に adversary と `/code-review` を並べて最大2巡回す |
+| `claude/agents/adversary.md` | adversary | `.claude/agents/adversary.md`。計画の問い・報告の形式・禁止事項。モデルは Fable |
+| `claude/skills/plan-writer/` | ガネーシャ | `.claude/skills/plan-writer/`。承認を頼む前に、Fable を1回、その後は健さんを採る指摘が0になるまで呼ぶ |
+| `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を回す。PR の前に健さんの review を、採る指摘が0になるまで回す |
 | `claude/skills/diff-reviewer/` | ガネーシャ | `.claude/skills/diff-reviewer/`。PR 前の差分レビューと、PR に付いた指摘の対応 |
 | `claude/skills/codex/` | ガネーシャ・メジェド | `.claude/skills/codex/`。健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
 | `repo-files/codex/AGENTS.md` | 健さん | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲。同じ場所に `AGENTS.override.md` を置かない（そちらが優先される） |
@@ -76,21 +76,21 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 **タスクは1本ずつ回す。** 2本を同じ作業ツリーで並行すると、未コミットの変更が混ざる。
 
-1. 計画：「<タスク名> の計画を立てて」→ ガネーシャが plan.md を書き（プランモードは使わない）、adversary に壊しに来させて直す → まーちゅうが承認欄にチェック
-2. 実装：「<タスク名> をメジェドに実装してもらって」→ ガネーシャが `feature/<タスク名>` を切ってメジェドを呼び、レビュー→修正を回す。チェックが2回以上落ちていたら adversary に「隠しただけか」を見させる。OK になったら PR の前に adversary と `/code-review` を並べて回し、片付いたら報告してくる
+1. 計画：「<タスク名> の計画を立てて」→ ガネーシャが plan.md を書き（プランモードは使わない）、Fable に1回、続けて健さんに採る指摘が0になるまで壊しに来させて直す → まーちゅうが承認欄にチェック
+2. 実装：「<タスク名> をメジェドに実装してもらって」→ ガネーシャが `feature/<タスク名>` を切ってメジェドを呼び、レビュー→修正を回す。チェックが2回以上落ちていたら健さんに「隠しただけか」を見させる。OK になったら PR の前に健さんの review を回し、片付いたら報告してくる
 3. PR：「コミットして PR を出して」→ ガネーシャがコミット・push・PR 作成。マージはしない
-4. PR のレビュー：「PR の指摘を見て」→ ガネーシャが検証して review.md に書き、コードの指摘はメジェドに直させ、スレッドに返信して再レビューを依頼する
+4. PR のレビュー：「PR の指摘を見て」→ ガネーシャが検証して review.md に書き、コードの指摘はメジェドに直させ、スレッドに返信する（Copilot のレビューは1回だけ。再レビューを頼むかはまーちゅうが決める）
 5. マージ：まーちゅう
 
 ### 作業の流れ（要約）
 
 計画から PR までの細かい分かれ目（フローチャート）・言葉の決まり・回数の上限の**正本は [repo-files/docs/team/workflow.md](repo-files/docs/team/workflow.md)**。各リポジトリには `docs/team/workflow.md` として配る。スキル・メジェド・adversary は、作業の最初にこれを Read で読む。
 
-- 計画：書いたら adversary（plan）に壊しに来させる。承認を頼むたびに最大2回
-- 実装：メジェドの報告を受けるたびに、停止なら保留、「途中で2回以上落ちたチェック」があれば adversary（repeated-failure）
-- PR の前：diff-reviewer が OK なら、adversary（pre-pr）と `/code-review high --max-findings default` を並べて回す。最大2巡
-- 修正依頼は、PR の前までは由来を問わず合算で最大3回。PR に付いたレビューでの修正依頼は別に最大3回。上限に達したら保留して、まーちゅうに判断を頼む
-- 承認をやり直したら、上限は数え直す
+- 計画：書いたら Fable（adversary・plan）に壊しに来させる（1つの計画につき1回）。その後は健さんに、採る指摘が0になるまで頼む（最大5回）
+- 実装：メジェドの報告を受けるたびに、停止なら保留、「途中で2回以上落ちたチェック」があれば健さん（consult）
+- PR の前：diff-reviewer が OK なら、健さんの review を、採る指摘が0になるまで回す（最大5回）。`/code-review` は頼まれたときだけ
+- diff-reviewer の指摘による修正依頼は最大3回。PR に付いたレビューでの修正依頼は別に最大3回。上限に達したら保留して、まーちゅうに判断を頼む
+- 承認をやり直したら、上限は数え直す（Fable は数え直さない）
 
 ## 導入方法
 
