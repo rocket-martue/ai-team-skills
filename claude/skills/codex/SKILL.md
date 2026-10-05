@@ -32,6 +32,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1 -Mode <consult|review|image> -Task <タスク名> [-PromptFile <一時ファイル>] [-Image "<画像1>|<画像2>"] [-Base <基準ブランチ>]
    ```
 
+   - worktree（`.claude/worktrees/<名前>`）で作業しているときは、`-WorkingDirectory <パス>`（リポジトリの根からの相対パス）を付ける。健さんはそのパスを作業の根にして読む
    - `-Task` は必須（返事を `docs/tasks/<タスク名>/codex/` に残すため。無ければラッパーが止まる）
    - `review`：コミット前は何も付けない（`--uncommitted`）。コミット済みを見るときは `-Base <既定ブランチ>`
    - `image`：参照画像は `|` 区切りの1つの文字列で渡す
@@ -72,7 +73,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
   - 2回目からは、「改訂履歴の最後の行が前回の指摘で直したところ。直し方が動くかも確かめる」
 - **直ったのか隠しただけか**（チェックが2回以上落ちたとき）
   - メジェドの報告の「途中で2回以上落ちたチェック」の行
-  - 差分の取り方：`git diff HEAD -- . ":(exclude)docs/tasks/<タスク名>/review.md"` と、未追跡のファイルはディレクトリにまとめず `git status --porcelain -uall` で見ること
+  - 差分の取り方：`git diff HEAD -- . ":(exclude)docs/tasks/<タスク名>/review.md"` と、未追跡のファイルはディレクトリにまとめず `git status --porcelain -uall` で見ること。worktree のときも `-C` は付けない（健さんはラッパーの `-WorkingDirectory` で worktree を作業の根にして動くため。付けると worktree の中の同じパスを探して失敗する）
   - `docs/tasks/<タスク名>/review.md` は判断に使わないこと
   - 疑う形：テストや期待値の書き換え・条件や対象を外す・例外の握り潰し・スキップ・タイムアウトや再試行で通す
 
@@ -82,7 +83,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
 - sandbox は常に `read-only`。`implement` に当たる呼び方（`workspace-write` など）はしない
 - `review`：呼ぶ前に `git status --porcelain -z -uall` を見て、未追跡の秘密情報のファイルがあれば呼ばずに止まる（`--uncommitted` は未追跡のファイルを Codex に送るため）
 - `image`：参照画像を空の一時ディレクトリに `ref-1.png` のような名前でコピーし、そこを作業の根にして呼ぶ（リポジトリには触れない。Codex の `-i` はカンマで値を分けるので、元の名前は渡さない）。答えの `IMAGE_PATH:` の行の画像が、生成画像の保存先（`<CODEX_HOME>/generated_images/`）の下にあり、今回渡した参照画像と別のファイルなら、`IMAGE:` の行で出す。そうでなければ終了コード 2 で止まる（文章から正規表現でパスを探さない。空白・UNC・アポストロフィで取りこぼすため。時刻でも探さない。同時に別の Codex が作った画像を取り違えるため）
-- 返事を `docs/tasks/<タスク名>/codex/<連番>-<モード>.md` に保存する（`.gitignore` で Git に入れない）
+- 返事を `docs/tasks/<タスク名>/codex/<連番>-<モード>.md` に保存する（`.gitignore` で Git に入れない）。worktree から呼んでも、保存先は**メインのチェックアウト**（`git worktree list` の1件目）の下になる（写す手順は要らない）。求められなければ作業の根の下
 
 ## 注意
 

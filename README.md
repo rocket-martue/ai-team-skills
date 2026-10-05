@@ -30,7 +30,9 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `claude/skills/codex/` | ガネーシャ・メジェド | `.claude/skills/codex/`。健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
 | `repo-files/codex/AGENTS.md` | 健さん | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲。同じ場所に `AGENTS.override.md` を置かない（そちらが優先される） |
 | `claude/hooks/guard-code-edit.mjs` | 全員 | `.claude/hooks/guard-code-edit.mjs`。編集の直前に「誰が・どこを」編集するかを見て止める |
+| `claude/hooks/test-guard-code-edit.mjs` | 全員 | `.claude/hooks/test-guard-code-edit.mjs`。フックの確かめ（`node .claude/hooks/test-guard-code-edit.mjs`）。フックに入力の JSON を流して終了コードを見る。git は呼ばない |
 | `claude/settings.json` | 全員 | `.claude/settings.json`。フックの登録と、git・秘密情報の権限 |
+| `repo-files/gitignore.snippet` | 全員 | 各リポジトリの `.gitignore` に足す行（`.claude/worktrees/`・`docs/tasks/*/codex/`） |
 
 ## ファイルの分け方
 
@@ -92,6 +94,15 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 - diff-reviewer の指摘による修正依頼は最大3回。PR に付いたレビューでの修正依頼は別に最大3回。上限に達したら保留して、まーちゅうに判断を頼む
 - 承認をやり直したら、上限は数え直す（Fable は数え直さない）
 
+## worktree で作業するとき
+
+- worktree を作るのは gh-issue スキル（まーちゅうに頼まれたとき）だけ。置き場所はリポジトリの中の `.claude/worktrees/<名前>/`。plan-writer・delegate-to-mejed は worktree もブランチも作らない。使わないときは、今のまま（作業ツリーで `git switch -c`）
+- パスは、どこでもリポジトリの根からの相対パスで書いて渡す（Git Bash の `/c/...` 形は Node.js と PowerShell で別のパスになるため）
+- plan.md も review.md も worktree の中の `docs/tasks/<タスク名>/` に書く（メインのチェックアウトの未コミットのファイルは worktree から見えないため）
+- git は `git -C <パス>`。ほかのコマンド（チェックコマンドなど）は `(cd <パス> && <コマンド>)`。健さんのラッパーは `-WorkingDirectory <パス>`（返事はメインのチェックアウトの `docs/tasks/<タスク名>/codex/` に残る）
+- フックは `.claude/worktrees/<名前>/` の頭を剥がして、メインのチェックアウトと同じ判定をする。秘密情報の判定だけは、剥がす前のパスにも当てる
+- settings.json の `deny` は先頭一致なので、`git -C <パス> reset --hard` は `Bash(git reset:*)` に当たらない。そこで ask に大域オプションで始まる git（`git -C`・`git -c`・`git --git-dir`・`git --work-tree`・`git --no-pager`）を足してある。**worktree での git は毎回確認が出る**（手間として受け入れる）。この柵は、うっかり別の書き方で打つのを止めるもの。`sh -c '...'` で包む・パスで git を呼ぶなど、わざと別の形にするものは防がない（サンドボックスの役目）
+
 ## 導入方法
 
 1. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）
@@ -101,7 +112,8 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 5. 健さん（Codex）を使うなら
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
    - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
-   - リポジトリの `.gitignore` に `docs/tasks/*/codex/` を足す（健さんの返事の保存先。Git に入れない）
+   - `docs/tasks/*/codex/` は健さんの返事の保存先で、Git に入れない（次の手順 6 の snippet に入っている）
+6. `repo-files/gitignore.snippet` の行を、リポジトリの `.gitignore` に足す（健さんを使うかどうかに関係なく。`.claude/worktrees/` は worktree の置き場所）
 
 ## 導入後に確認すること
 

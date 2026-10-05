@@ -21,6 +21,9 @@ const SECRET_PATTERNS = [/(^|\/)\.dev\.vars$/, /(^|\/)\.kv\//, /(^|\/)wp-config\
 // .md は「コード以外（.md）の PR レビューの指摘はガネーシャが直す」（Ganesha.md）のため。
 const PLANNER_WRITABLE = [/^docs\/tasks\//, /\.md$/];
 
+// git worktree の置き場所（リポジトリの中）。この頭を剥がした相対パスで、メインのチェックアウトと同じ判定をする。
+const WORKTREE_PREFIX = /^\.claude\/worktrees\/[^/]+\/(.+)$/;
+
 // リポジトリの外でも編集してよい場所。Claude Code 自身が使う置き場所だけにする。
 // `base` の中で、`base` からの相対パスが `pattern` に当たるものだけ通す。
 // ~/.claude/ を丸ごと通すと、ユーザー共通の settings.json・CLAUDE.md・スキル・認証情報まで書き換えられるので、
@@ -112,7 +115,17 @@ function judge(absolute, projectDir, outsideWritable, label) {
 		return `guard-code-edit: リポジトリの外（${label}）は編集できません。`;
 	}
 
-	const rel = forMatch(path.relative(projectDir, absolute).split(path.sep).join('/'));
+	const projectRel = forMatch(path.relative(projectDir, absolute).split(path.sep).join('/'));
+
+	// 秘密情報の判定は、worktree の頭を剥がす前のパスにも当てる（worktree の名前が `.kv` などでも抜けないように）。
+	if (SECRET_PATTERNS.some((re) => re.test(projectRel))) {
+		return `guard-code-edit: ${label} は秘密情報のファイルなので編集できません。`;
+	}
+
+	// `.claude/worktrees/<名前>/` の中は、その頭を剥がした相対パスで判定する。
+	// `.claude/worktrees/<名前>` そのもの（剥がすと空）は、剥がさずに今と同じ判定にする。
+	const worktreeMatch = WORKTREE_PREFIX.exec(projectRel);
+	const rel = worktreeMatch ? worktreeMatch[1] : projectRel;
 
 	if (SECRET_PATTERNS.some((re) => re.test(rel))) {
 		return `guard-code-edit: ${label} は秘密情報のファイルなので編集できません。`;
