@@ -5,6 +5,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 - **ガネーシャ**（Claude Code のメイン）＝ 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応
 - **メジェド**（サブエージェント `mejed`・Sonnet）＝ 実装・指摘の修正
 - **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前・チェックが2回以上落ちたとき・PR の前に、計画や差分を壊す側から読んで指摘だけを返す。直さない
+- **健さん**（Codex CLI・外部委託業者）＝ 読むだけの相談・レビューと、画像の生成。スキル `codex` から呼ぶ。実装は頼まない
 - **まーちゅう** ＝ 要件決定・計画の承認・最終確認・マージ
 
 > 以前は Codex をメジェドにしていたが、2つのツールの行き来（セッションの切り替え・進捗をリモートで見られない）の手間が大きかったので、
@@ -26,6 +27,8 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `claude/skills/plan-writer/` | ガネーシャ | `.claude/skills/plan-writer/`。承認を頼む前に adversary を呼ぶ |
 | `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を最大3回回す。PR の前に adversary と `/code-review` を並べて最大2巡回す |
 | `claude/skills/diff-reviewer/` | ガネーシャ | `.claude/skills/diff-reviewer/`。PR 前の差分レビューと、PR に付いた指摘の対応 |
+| `claude/skills/codex/` | ガネーシャ・メジェド | `.claude/skills/codex/`。健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
+| `repo-files/codex/AGENTS.md` | 健さん | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲。同じ場所に `AGENTS.override.md` を置かない（そちらが優先される） |
 | `claude/hooks/guard-code-edit.mjs` | 全員 | `.claude/hooks/guard-code-edit.mjs`。編集の直前に「誰が・どこを」編集するかを見て止める |
 | `claude/settings.json` | 全員 | `.claude/settings.json`。フックの登録と、git・秘密情報の権限 |
 
@@ -94,7 +97,11 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 1. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）
 2. `repo-files/docs/team/` をリポジトリの `docs/team/` に置き（common-rules.md・Ganesha.md・workflow.md の3つが入る）、`CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
 3. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える
-4. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す
+4. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す（`invoke-codex.ps1` の `$SecretPatterns` も同じにそろえる）
+5. 健さん（Codex）を使うなら
+   - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
+   - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
+   - リポジトリの `.gitignore` に `docs/tasks/*/codex/` を足す（健さんの返事の保存先。Git に入れない）
 
 ## 導入後に確認すること
 
