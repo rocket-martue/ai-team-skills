@@ -6,7 +6,8 @@
       "Bash(git log:*)",
       "Bash(git status)",
       "Bash(git show:*)",
-      "Bash(vendor/bin/phpcs:*)"
+      "Bash(vendor/bin/phpcs:*)",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1:*)"
     ],
     "ask": [
       "Bash(git add:*)",
