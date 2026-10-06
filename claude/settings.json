@@ -4,7 +4,9 @@
       "Edit(docs/tasks/**)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
-      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git fetch origin)",
+      "Bash(gh repo view:*)",
       "Bash(git show:*)",
       "Bash(vendor/bin/phpcs:*)",
       "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1:*)"

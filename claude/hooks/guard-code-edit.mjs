@@ -20,10 +20,10 @@ const IMPLEMENTER = 'mejed';
 // 先頭で固定しない（`(^|/)`）。worktree の中（.claude/worktrees/<名前>/.dev.vars）でも当たるようにする。
 const SECRET_PATTERNS = [/(^|\/)\.dev\.vars$/, /(^|\/)\.kv\//, /(^|\/)wp-config\.php$/, /(^|\/)\.env[^/]*$/];
 
-// 確認（ask）を出すパス（リポジトリのルートから）。Windows では小文字にそろえて照合するので、大文字を含む名前は i フラグで書く。チームの設定・規約。
+// 確認（ask）を出すパス（リポジトリのルートから）。チームの設定・規約。
 // - .claude/ の下（ただし .claude/worktrees/ の下は除く。そこは worktree の置き場所で、頭を剥がした後のパスで判定する）
 // - docs/team/ の下と、リポジトリの根の CLAUDE.md（docs/team/Ganesha.md を取り込む入口）
-// Windows では照合の前にパスを小文字にそろえるので、大文字を含む名前（CLAUDE.md・ISSUE_TEMPLATE）は小文字で書いて i フラグを付ける。
+// Windows では照合の前にパスを小文字にそろえるので、大文字を含む名前（CLAUDE.md など）は小文字で書いて i フラグを付ける。
 const CONFIRM_PATTERNS = [/^\.claude\/(?!worktrees\/)/, /^docs\/team\//, /^claude\.md$/i];
 
 // docs/tasks/<タスク名>/plan.md。メジェドは書き換えられない。

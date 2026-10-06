@@ -15,10 +15,11 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
    - 承認欄にチェックがあっても、「確認事項」に未解決（基準は workflow.md の「確認事項の未解決」）が残っていれば、メジェドを呼ぶ前に保留する
 2. 作業ツリーを確かめる。**タスクは1本ずつ。**
    - `git status --short --branch` で、別タスクの未コミットの変更が無いことを確かめる。あれば止めて、まーちゅうに報告する（plan.md と review.md だけなら、このタスクのものか確かめる）
-   - **worktree で作業するとき（次の「main にいて」「切る」の代わりに）**（plan.md が `.claude/worktrees/<名前>/docs/tasks/<タスク名>/` にあるなど、gh-issue が worktree を用意している）：その `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）を作業ツリーとする。worktree もブランチもここでは作らず、`git switch -c` はしない。git は `git -C <パス>` で打ち（`git status --short --branch` も同じ）、ほかのコマンドは `(cd <パス> && <コマンド>)` で打つ。`git -C` は settings.json の ask で毎回確認が出る
-   - main にいて、main が最新であることを確かめる
-   - `feature/<タスク名>` を切る（`git switch -c feature/<タスク名>`。既にあれば、それに切り替えてよいかまーちゅうに確認する）
-   - 着手したイシューが GitHub Projects のボードに入っているなら、Status を **In Progress** にする（下の「ボードの Status」）
+   - `git fetch origin` で最新にする（worktree のときは `git -C <パス> fetch origin`）
+   - 既定のブランチと `<owner>/<name>` を、origin を引数にして求める：`gh repo view "$(git remote get-url origin)" --json defaultBranchRef,nameWithOwner`（環境変数 `GH_REPO` があっても origin と食い違わないようにするため。worktree のときは `git -C <パス> remote get-url origin`）。手順8の `gh pr create` で両方の値が要る
+   - **worktree で作業するとき（次の「ブランチを切る」の代わりに）**（plan.md が `.claude/worktrees/<名前>/docs/tasks/<タスク名>/` にあるなど、gh-issue が worktree を用意している）：その `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）を作業ツリーとする。worktree もブランチもここでは作らず、`git switch -c` はしない。git は `git -C <パス>` で打ち（`git status --short --branch` も同じ）、ほかのコマンドは `(cd <パス> && <コマンド>)` で打つ。`git -C` は settings.json の ask で毎回確認が出る
+   - ブランチを切る。plan.md の「ブランチ」欄の名前（`<ブランチ>`）で切る。メジェドへの実装の依頼には、このブランチを切ることが含まれる（まーちゅうに別に頼まれなくてよい）
+     - `git switch -c <ブランチ> --no-track origin/<既定ブランチ>`（`--no-track` が無いと追跡先が既定のブランチになり、引数なしの `git push` が失敗するか既定のブランチへ送ってしまうため）。既にあれば、それに切り替えてよいかまーちゅうに確認する
 3. `mejed` サブエージェントに実装を頼む。渡すのは次の3つだけにする（会話の経緯や自分の実装案は渡さない）
    - タスク名
    - plan.md のパス
@@ -40,8 +41,8 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
    - 「コミットと PR をしていい？」（いいえなら、まーちゅうの指示を待つ）
 8. まーちゅうに頼まれたら、コミット・push・PR を作る
    - `git add` は触ったファイルを名指しする（`-A` や `.` を使わない）。plan.md と review.md も含める
-   - `gh pr create` は `--head feature/<タスク名>` を明示する。本文に plan.md と review.md へのリンクを貼る
-   - PR に書いた `Closes` / `Refs` のイシューがボードに入っているなら、Status を **Review** にする（下の「ボードの Status」）
+   - push は宛先を明示する：`git push -u origin <ブランチ>`
+   - `gh pr create` は `--repo <owner>/<name> --base <既定ブランチ> --head <ブランチ>` を明示する（`--base` が無いと、ブランチの `gh-merge-base` の設定が既定のブランチより優先され、レビューした差分と PR の宛先が食い違うことがある）。本文に plan.md と review.md へのリンクを貼る
    - PR の前の確認の健さんの返事を、全部の回の分、PR に貼る。貼る前に、秘密情報・クライアント識別情報・ローカルの絶対パスが無いか確かめ、パスの部分だけ相対パスに直す（要約にしない）
    - Copilot のレビューの回数は workflow.md に従う（再レビューを頼むかは、まーちゅうが決める）
    - PR を作ったら、まーちゅうに PR のリンクを渡して止まる。**マージはしない**
@@ -72,12 +73,6 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
   - 採る指摘で分ける：無い・見送った指摘だけなら、手順7の報告へ。計画に効く指摘があれば、保留する。それ以外は、上限に達していなければ `mejed` に直させて手順4に戻る（直した後は、また diff-reviewer を通って健さんの review に戻る）。上限に達しても採る指摘があれば保留する
   - 健さんを呼べなかったときは、「指摘なし」とは扱わず、保留する
 - `/code-review` は、まーちゅうに頼まれたときだけ回す（流れには入れない）
-
-## ボードの Status
-
-- 手順は `~/.claude/skills/gh-flow/references/project-status.md` に従う。イシューごとに `projectItems` を読み、ボードに入っているときだけ動かす（入っていなければ何もしない）
-- 動かしたら読み戻して確かめる。選択肢の名前（In Progress / Review）がボードに無ければ飛ばして、まーちゅうに一言伝える
-- マージ後（`Closes` が Done になったかの確認、`Refs` を In Progress に戻す）は `gh-wrapup` スキルで行う
 
 ## 絶対にしないこと
 
