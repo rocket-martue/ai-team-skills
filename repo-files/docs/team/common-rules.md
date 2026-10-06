@@ -23,7 +23,8 @@
 - 秘密情報（API キー、DB 情報、wp-config.php）は扱わない、コミットしない
 - タスクの記録は `docs/tasks/<タスク名>/` に置く（plan.md、review.md）
 - タスクは1本ずつ進める。別タスクの未コミットの変更が残っている作業ツリーで始めない
-- 編集の制限（`.claude/hooks/guard-code-edit.mjs`）が見るのは Edit / Write などの編集ツールだけ。Bash 経由の書き込み・読み取り（リダイレクト・`sed -i`・`cat` など）は止まらない。コードの編集と秘密情報の読み取りを Bash で回り込まない（フックと settings.json の Read の禁止は、うっかりを防ぐ柵で、壁ではない）
+- 編集の制限（`.claude/hooks/guard-code-edit.mjs`）が見るのは Edit / Write などの編集ツールだけ。Bash・PowerShell 経由の書き込み・読み取り（リダイレクト・`sed -i`・`Set-Content`・`cat` など）は止まらない。コードの編集と秘密情報の読み取りを Bash・PowerShell で回り込まない（フックと settings.json の Read の禁止は、うっかりを防ぐ柵で、壁ではない）
+- 次は確認が出る（まーちゅうの確認を取る）。`docs/team/`（この規約・作業の流れ・Ganesha.md）、リポジトリの根の `CLAUDE.md`、`.claude/`（worktree の中の `.claude/` を含む）の編集。`git stash`・`restore`・`clean`・`rm`・`branch`・`worktree remove` などコミット前の作業やブランチを消せる git のコマンド
 - クライアント名・実ドメインをコード・テスト・コミットメッセージに書かない
 
 ## チェックコマンド
