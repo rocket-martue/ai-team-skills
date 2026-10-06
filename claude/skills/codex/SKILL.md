@@ -34,7 +34,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
 
    - worktree（`.claude/worktrees/<名前>`）で作業しているときは、`-WorkingDirectory <パス>`（リポジトリの根からの相対パス）を付ける。健さんはそのパスを作業の根にして読む
    - `-Task` は必須（返事を `docs/tasks/<タスク名>/codex/` に残すため。無ければラッパーが止まる）
-   - `review`：コミット前は何も付けない（`--uncommitted`）。コミット済みを見るときは `-Base <既定ブランチ>`
+   - `review`：コミット前は何も付けない（`--uncommitted`）。コミット済みを見るときは `git fetch origin` のあと `-Base origin/<既定ブランチ>`（diff-reviewer と同じ基準で比べるため）。`-Base` で呼ぶ前に、`git status --short --branch` で今のブランチが plan.md の「ブランチ」欄と同じか確かめ、違えば呼ばずに保留する（ラッパーは今のブランチ（HEAD）を見るので、別のブランチにいると別の変更を確認してしまうため）。worktree のときは、リポジトリの根で打つとメイン側のブランチを見てしまうので、`git -C <パス> fetch origin`・`git -C <パス> status --short --branch` で確かめる
    - `image`：参照画像は `|` 区切りの1つの文字列で渡す
    - 1回に数分かかる（相談・レビューで5〜7分ほど）。Bash ツールのタイムアウトは長めにする
 4. 一時ファイルを消す
