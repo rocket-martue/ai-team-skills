@@ -93,28 +93,47 @@ if ($Mode -ne 'review') {
 }
 
 if ($Mode -eq 'review') {
-	# --uncommitted は未追跡のファイルを Codex が自分で拾う。頼みの文では止められないので、呼ぶ前に見る
-	# -uall: 未追跡のディレクトリを1行にまとめず、中のファイルまで出す。-z: 空白や日本語のパスを引用符で囲まない
+	# review は健さんに変更を渡す（--uncommitted: ステージ済み・未ステージ・未追跡 / --base: 基準ブランチとの差分と、見込みでは未コミットの変更）。
+	# 渡る変更のすべてのパスを、呼ぶ前に秘密情報のパターンと照らす
+	# git status の -uall: 未追跡のディレクトリを1行にまとめず、中のファイルまで出す。-z: 空白や日本語のパスを引用符で囲まない
 	Push-Location -LiteralPath $RepoRoot
 	try {
 		$previous = $ErrorActionPreference
 		$ErrorActionPreference = 'Continue'
 		$status = (& git status --porcelain -z -uall 2>$null) -join "`n"
 		$gitCode = $LASTEXITCODE
+		$diffNames = ''
+		$diffCode = 0
+		if (-not [string]::IsNullOrWhiteSpace($Base)) {
+			# --no-renames: 名前を変えたファイルを「元の名前の削除」と「新しい名前の追加」に分け、両方のパスを出させる
+			$diffNames = (& git diff --name-only --no-renames -z "$Base...HEAD" -- 2>$null) -join "`n"
+			$diffCode = $LASTEXITCODE
+		}
 		$ErrorActionPreference = $previous
 	} finally {
 		Pop-Location
 	}
 	if ($gitCode -ne 0) { Stop-Wrapper "git status が失敗しました（Git のリポジトリですか？）: $RepoRoot" }
+	if ($diffCode -ne 0) { Stop-Wrapper "git diff が失敗しました（基準ブランチ $Base はありますか？）: $RepoRoot" }
 	$secrets = @()
-	foreach ($entry in ($status -split [char]0)) {
-		if ($entry.StartsWith('?? ')) {
-			$path = $entry.Substring(3)
-			if (Test-SecretPath $path) { $secrets += $path }
+	# 各項目は「XY <パス>」。X か Y が R・C（名前を変えた・写した）の項目は、次の項目に元のパスだけが続く
+	$entries = @($status -split [char]0)
+	for ($i = 0; $i -lt $entries.Count; $i++) {
+		$entry = $entries[$i]
+		if ($entry -eq '' -or $entry.Length -lt 4) { continue }
+		$xy = $entry.Substring(0, 2)
+		$path = $entry.Substring(3)
+		if (Test-SecretPath $path) { $secrets += $path }
+		if ($xy.Contains('R') -or $xy.Contains('C')) {
+			$i++
+			if ($i -lt $entries.Count -and $entries[$i] -ne '' -and (Test-SecretPath $entries[$i])) { $secrets += $entries[$i] }
 		}
 	}
+	foreach ($path in ($diffNames -split [char]0)) {
+		if ($path -ne '' -and (Test-SecretPath $path)) { $secrets += $path }
+	}
 	if ($secrets.Count -gt 0) {
-		Stop-Wrapper ('未追跡の秘密情報のファイルがあるので、review を呼びません（--uncommitted は未追跡のファイルを Codex に送るため）: ' + ($secrets -join ', '))
+		Stop-Wrapper ('健さんに渡る変更に秘密情報のファイルがあるので、review を呼びません（未追跡・ステージ済み・書き換え・名前の変更・基準ブランチとの差分のどれも Codex に送られるため）: ' + (($secrets | Select-Object -Unique) -join ', '))
 	}
 }
 
@@ -202,7 +221,7 @@ try {
 		}
 
 		'review' {
-			# 未追跡の秘密情報の確認は、一時ディレクトリを作る前に済ませてある
+			# 健さんに渡る変更の秘密情報の確認は、一時ディレクトリを作る前に済ませてある
 			Push-Location -LiteralPath $RepoRoot
 			try {
 				# review は対象の指定と頼みの文を同時に受け付けない。決まりは健さんの AGENTS.md で持たせる

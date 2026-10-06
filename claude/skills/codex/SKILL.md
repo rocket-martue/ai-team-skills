@@ -81,7 +81,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
 
 - `codex` が PATH に無ければ、入れ方を出して止まる
 - sandbox は常に `read-only`。`implement` に当たる呼び方（`workspace-write` など）はしない
-- `review`：呼ぶ前に `git status --porcelain -z -uall` を見て、未追跡の秘密情報のファイルがあれば呼ばずに止まる（`--uncommitted` は未追跡のファイルを Codex に送るため）
+- `review`：呼ぶ前に、健さんに渡る変更のすべてのパスを秘密情報のパターンと照らし、1つでも当たれば呼ばずに止まる。見るのは `git status --porcelain -z -uall` のすべての項目（未追跡・ステージ済み・書き換え・名前の変更は元の名前も）と、`-Base` のときは `git diff --name-only --no-renames -z <基準ブランチ>...HEAD` のパス（`--uncommitted` も `--base` も、これらを Codex に送るため）。`-Base` の基準ブランチが無く `git diff` が失敗したときも止まる
 - `image`：参照画像を空の一時ディレクトリに `ref-1.png` のような名前でコピーし、そこを作業の根にして呼ぶ（リポジトリには触れない。Codex の `-i` はカンマで値を分けるので、元の名前は渡さない）。答えの `IMAGE_PATH:` の行の画像が、生成画像の保存先（`<CODEX_HOME>/generated_images/`）の下にあり、今回渡した参照画像と別のファイルなら、`IMAGE:` の行で出す。そうでなければ終了コード 2 で止まる（文章から正規表現でパスを探さない。空白・UNC・アポストロフィで取りこぼすため。時刻でも探さない。同時に別の Codex が作った画像を取り違えるため）
 - 返事を `docs/tasks/<タスク名>/codex/<連番>-<モード>.md` に保存する（`.gitignore` で Git に入れない）。worktree から呼んでも、保存先は**メインのチェックアウト**（`git worktree list` の1件目）の下になる（写す手順は要らない）。求められなければ作業の根の下
 
