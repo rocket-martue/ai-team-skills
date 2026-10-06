@@ -28,6 +28,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を回す。PR の前に健さんの review を、採る指摘が0になるまで回す |
 | `claude/skills/diff-reviewer/` | ガネーシャ | `.claude/skills/diff-reviewer/`。PR 前の差分レビューと、PR に付いた指摘の対応 |
 | `claude/skills/codex/` | ガネーシャ・メジェド | `.claude/skills/codex/`。健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
+| `claude/skills/codex/scripts/test-invoke-codex.mjs` | ガネーシャ・メジェド | `.claude/skills/codex/scripts/test-invoke-codex.mjs`。ラッパーの review の前の秘密情報の確かめの確認（`node .claude/skills/codex/scripts/test-invoke-codex.mjs`）。偽物の `codex` と仮の Git のリポジトリだけを使い、本物の健さんは呼ばない |
 | `repo-files/codex/AGENTS.md` | 健さん | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲。同じ場所に `AGENTS.override.md` を置かない（そちらが優先される） |
 | `claude/hooks/guard-code-edit.mjs` | 全員 | `.claude/hooks/guard-code-edit.mjs`。編集の直前に「誰が・どこを」編集するかを見て止める |
 | `claude/hooks/test-guard-code-edit.mjs` | 全員 | `.claude/hooks/test-guard-code-edit.mjs`。フックの確かめ（`node .claude/hooks/test-guard-code-edit.mjs`）。フックに入力の JSON を流して終了コードを見る。git は呼ばない |
