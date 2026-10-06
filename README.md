@@ -47,16 +47,27 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 ## 編集できる範囲（フックで判定）
 
-| 誰が | docs/tasks/ と Markdown（.md） | それ以外のコード | 秘密情報（.dev.vars、.kv/、wp-config.php、.env） | リポジトリの外 |
+判定は上から順に当てて、当たったところで決まる。`.claude/worktrees/<名前>/` の頭は、剥がせなくなるまで繰り返し剥がしてから当てる（秘密情報だけは、剥がす前のパスにも当てる）。
+
+| # | 当たるパス | ガネーシャ | メジェド（mejed） | ほかのサブエージェント |
 | --- | --- | --- | --- | --- |
-| ガネーシャ | ○ | × | × | `~/.claude/projects/<p>/memory/`・`~/.claude/plans/`・`<一時ディレクトリ>/claude/` だけ ○ |
-| メジェド（mejed） | ○ | ○ | × | 同上 |
-| ほかのサブエージェント | ○ | × | × | 同上 |
+| 1 | リポジトリの外（`~/.claude/projects/<p>/memory/`・`~/.claude/plans/`・`<一時ディレクトリ>/claude/` を除く） | × | × | × |
+| 2 | 秘密情報（`.dev.vars`、`.kv/`、`wp-config.php`、`.env`） | × | × | × |
+| 3 | `.claude/` の下（ただし `.claude/worktrees/` の下は除く。頭を剥がした後のパスで判定する） | 確認 | 確認 | 確認 |
+| 4 | `docs/team/` の下・リポジトリの根の `CLAUDE.md`（`Ganesha.md` を取り込む入口なので `docs/team/` と同じに守る） | 確認 | 確認 | 確認 |
+| 5 | `docs/tasks/<タスク名>/plan.md` | ○ | × | ○ |
+| 6 | `docs/tasks/` の下・Markdown（`.md`）・`.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` の下 | ○ | ○ | ○ |
+| 7 | それ以外（コード） | × | ○ | × |
+
+「確認」は、フックが `permissionDecision: "ask"` を返して、まーちゅうの確認を取る（理由は「チームの設定・規約なので、まーちゅうの確認を取る」）。
 
 - Markdown を通すのは「コード以外（.md）の PR レビューの指摘はガネーシャが直す」（Ganesha.md）ため
-- adversary は tools に Edit / Write を持たないので、そもそもフックまで届かない。ファイルを書ける経路は Bash（リダイレクト・`sed -i`・`git stash` など）だけで、adversary.md の禁止事項で縛っている（Bash はフックの対象外）
+- adversary は tools に Edit / Write を持たないので、そもそもフックまで届かない。ファイルを書ける経路は Bash・PowerShell（リダイレクト・`sed -i`・`git stash` など）だけで、adversary.md の禁止事項で縛っている（Bash・PowerShell はフックの対象外）
 - Windows のファイルシステムは大文字小文字を区別しないので、Windows ではパスを小文字にそろえてから照合する（`.DEV.VARS` も止まる）
-- 判定は「指定されたパス」と「シンボリックリンク（ジャンクションを含む）をたどった実体のパス」の両方に当てる。リンク経由で秘密情報・コード・リポジトリの外を書き換えることはできない
+- 判定は「指定されたパス」と「シンボリックリンク（ジャンクションを含む）をたどった実体のパス」の両方に当てる。リンク経由で秘密情報・コード・リポジトリの外を書き換えることはできない。2つの判定が違うときは、きつい方（止める > 確認 > 通す）を取る
+- 3 は、メインのチェックアウトでは Claude Code の protected paths（`.claude/` の下への書き込みを自動では通さない仕組み）と重なる。`.claude/worktrees/` の下は protected paths の例外で守られないので、worktree の中の `.claude/`（スキル・エージェント・フック）を守るのが目的。auto モードで、フックの確認と protected paths の分類器のどちらが先に効くかは、確かめていない
+- 4 は、共通規約・作業の流れ・Ganesha.md を、ガネーシャが確認なしで書き換えられないようにするため。5 は、メジェドが計画書を書き換えられないようにするため
+- `.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` は、コードではない設定なので、ガネーシャが編集できる（各リポジトリへの反映で `.gitignore` に `.claude/worktrees/` を足すのに要る）
 - `~/.claude/` は丸ごと通さない。ユーザー共通の settings.json・CLAUDE.md・スキル・認証情報が入っているので、メモリと計画ファイルの2か所だけにする
 
 - settings.json の `Edit(**/*.php)` のような禁止ルールはサブエージェントにも効いてしまい、メジェドが実装できなくなる。
@@ -70,9 +81,22 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | --- | --- |
 | `git diff` / `log` / `status` / `show` | 許可 |
 | `git add` / `commit` / `push` / `switch`、`gh pr` | 確認付き（まーちゅうに頼まれたときだけガネーシャが行う） |
+| `git stash` / `restore` / `clean` / `rm` / `worktree remove`、`git branch`（引数の有無を問わず全部） | 確認付き（コミット前の作業か、マージ前のブランチを消せるため。ブランチの削除は `-fD`・`-f -d`・`--force --delete` のように書き方がいくつもあってルールの形で潰しきれないので、`git branch` は全部確認にする。ブランチの名前は `git status` で分かる） |
+| `git -C` / `-c` / `--git-dir` / `--work-tree` / `--no-pager` で始まる git | 確認付き（deny は先頭一致なので、大域オプションで始まると `git reset` などの禁止をすり抜けるため。「worktree で作業するとき」を参照） |
 | `git checkout` / `merge` / `rebase` / `reset`、`gh pr merge` | 禁止 |
 
+同じルールを、PowerShell ツールにも `PowerShell(...)` の形で付けている（Bash のルールは PowerShell ツールには効かないため。allow は PowerShell には足していない）。
+
 メジェドは git に書き込まない（mejed.md の禁止事項）。マージはまーちゅうが行う。
+
+### 直さないもの
+
+| 項目 | 理由 |
+| --- | --- |
+| メジェドが review.md の指摘欄・判定欄を書き換えられる | フックはファイル単位でしか判定できず、メジェドは「対応」欄を書く必要がある。mejed.md の禁止事項で頼み、diff-reviewer が差分で見る |
+| `.env.example` が読めない・編集できない | Read の deny には例外の書き方（`!` で始まるパターン）があるが、使わない。`.env.example` にうっかり本物の値を写してしまうことがあり、確かめずに読ませないため。読めない側に倒す。見せたいときは、まーちゅうが中身を確かめて貼る |
+| データの JSON をガネーシャが編集できない | リポジトリごとに場所が違う。要るリポジトリで `PLANNER_WRITABLE` に足す（反映のときに各リポジトリで決める） |
+| Bash・PowerShell 経由の書き込みはフックに見えない | 編集のフックは Edit・Write などの編集ツールにだけ登録している（Claude Code のフックの仕組み）。「導入後に確認すること」を参照 |
 
 ## 使い方
 
@@ -119,9 +143,9 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 - **取り込みが効くか**：`/memory` を開き、Ganesha.md と common-rules.md が読み込まれているか確認する
 - **フックが動くか**：ガネーシャに「inc/ の PHP を1行直して」と頼み、フックで止められるか確認する。次にメジェドに同じことを頼み、通るか確認する。ガネーシャがメモリに書けることも確かめる
-- **Windows での実行**：フックは `node "$CLAUDE_PROJECT_DIR/..."` で呼んでいる。Windows でどのシェルが使われるかは公式ドキュメントに書かれていないが、Windows 11 の Claude Code（VS Code 拡張）では、この書き方のまま起動し、メインは止まり・`mejed` は通り・ほかのサブエージェント（`general-purpose`）は止まることを確かめた（2026-10-04・swx-inventory-hub）。止まらないときは `/hooks` で登録を確認し、コマンドをフルパスに書き換える
-- **フックの単体確認**：フックに JSON を標準入力で渡して終了コードを見る（`CLAUDE_PROJECT_DIR` に仮のリポジトリのパスを入れる）。期待値は、メインの `src/a.js` が 2、メインの `docs/tasks/x/plan.md` が 0、`agent_type: mejed` の `src/a.js` が 0、`agent_type: mejed` の `.dev.vars` が 2、ほかのサブエージェントの `src/a.js` が 2、メインのメモリ（`~/.claude/projects/<p>/memory/`）が 0、リポジトリの外が 2、JSON でない入力が 2
-- **Bash 経由の書き込みは止まらない**：`echo > file` や `sed -i` のようなシェル経由の書き込みは、このフックの対象外。
-  **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
+- **Windows での実行**：フックは、シェルを通さない書き方（`"command": "node"` と `"args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-code-edit.mjs"]`）で登録している。Git Bash が無い Windows では、シェル形のコマンドが PowerShell で動いて `$CLAUDE_PROJECT_DIR` が空になり、フックが起動しないまま編集が通るため（起動できないフックは止める側に倒れない。公式ドキュメント hooks の「Exec form and shell form」）。止まらないときは `/hooks` で登録を確認する
+- **フックの単体確認**：フックに JSON を標準入力で渡して終了コードを見る（`CLAUDE_PROJECT_DIR` に仮のリポジトリのパスを入れる）。期待値は、メインの `src/a.js` が 2、メインの `docs/tasks/x/plan.md` が 0、`agent_type: mejed` の `src/a.js` が 0、`agent_type: mejed` の `.dev.vars` が 2、ほかのサブエージェントの `src/a.js` が 2、メインのメモリ（`~/.claude/projects/<p>/memory/`）が 0、リポジトリの外が 2、JSON でない入力が 2。`.claude/` の下と `docs/team/` の下は終了コード 0 で、標準出力の JSON に `permissionDecision: "ask"` が入る
+- **Bash・PowerShell 経由の書き込みは止まらない**：`echo > file` や `sed -i`、PowerShell の `Set-Content` のようなシェル経由の書き込みは、このフックの対象外。
+  **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
 - **秘密情報**：フックの `SECRET_PATTERNS` と settings.json の `Read(...)` の deny を、案件に応じて追加・削除する
