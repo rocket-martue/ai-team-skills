@@ -145,9 +145,33 @@ function Invoke-Codex {
 	return $code
 }
 
+# 返事の保存先の根。worktree から呼ばれても、メインのチェックアウト（worktree list の1件目）にする。
+# 求められなければ（git が失敗・worktree でない）、作業の根のまま。
+function Get-ReplyRoot {
+	$previous = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		$lines = @(& git -C $RepoRoot worktree list --porcelain 2>$null)
+		$code = $LASTEXITCODE
+	} catch {
+		$code = 1
+	} finally {
+		$ErrorActionPreference = $previous
+	}
+	if ($code -ne 0) { return $RepoRoot }
+	foreach ($line in $lines) {
+		if ($line -match '^worktree (.+)$') {
+			$main = $Matches[1].Trim().Replace('/', '\')
+			if (Test-Path -LiteralPath $main -PathType Container) { return (Resolve-Path -LiteralPath $main).Path }
+			return $RepoRoot
+		}
+	}
+	return $RepoRoot
+}
+
 function Save-Reply {
 	param([string] $Text)
-	$dir = Join-Path $RepoRoot ("docs\tasks\$Task\codex")
+	$dir = Join-Path (Get-ReplyRoot) ("docs\tasks\$Task\codex")
 	New-Item -ItemType Directory -Path $dir -Force | Out-Null
 	# 連番は「今ある一番大きい番号 + 1」。同じ名前があれば上書きせず次の番号にする（欠番や同時の呼び出しで消さないため）
 	$max = 0

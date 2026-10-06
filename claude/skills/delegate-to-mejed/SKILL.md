@@ -15,6 +15,7 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
    - 承認欄にチェックがあっても、「確認事項」に未解決（基準は workflow.md の「確認事項の未解決」）が残っていれば、メジェドを呼ぶ前に保留する
 2. 作業ツリーを確かめる。**タスクは1本ずつ。**
    - `git status --short --branch` で、別タスクの未コミットの変更が無いことを確かめる。あれば止めて、まーちゅうに報告する（plan.md と review.md だけなら、このタスクのものか確かめる）
+   - **worktree で作業するとき（次の「main にいて」「切る」の代わりに）**（plan.md が `.claude/worktrees/<名前>/docs/tasks/<タスク名>/` にあるなど、gh-issue が worktree を用意している）：その `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）を作業ツリーとする。worktree もブランチもここでは作らず、`git switch -c` はしない。git は `git -C <パス>` で打ち（`git status --short --branch` も同じ）、ほかのコマンドは `(cd <パス> && <コマンド>)` で打つ。`git -C` は settings.json の ask で毎回確認が出る
    - main にいて、main が最新であることを確かめる
    - `feature/<タスク名>` を切る（`git switch -c feature/<タスク名>`。既にあれば、それに切り替えてよいかまーちゅうに確認する）
    - 着手したイシューが GitHub Projects のボードに入っているなら、Status を **In Progress** にする（下の「ボードの Status」）
@@ -22,10 +23,12 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
    - タスク名
    - plan.md のパス
    - 「plan.md どおりに実装して、報告の形式で返して」
+   - worktree で作業するときだけ、作業ツリーのパス（`.claude/worktrees/<名前>`。相対パス）も渡す
 4. メジェドの報告を受け取る（下の「メジェドの報告の受け方」）。保留になったら、そこで止まる
 5. `diff-reviewer` スキルの手順でレビューする。まだコミットが無いので、差分は次で取る
    - `git status`
    - `git diff HEAD`（ステージ済みと未ステージの両方。未追跡の新規ファイルは Read で中身を読む）
+   - worktree で作業するときは、どちらも `git -C <パス>` で打つ（`git -C <パス> status`・`git -C <パス> diff HEAD`）。diff-reviewer にもパスを渡す
 6. 判定で分ける
    - **計画に効く指摘**（plan.md を変えないと直らない）がある：保留する
    - **要修正**：diff-reviewer の指摘による修正依頼の上限（workflow.md の表）に達していなければ、`mejed` に「<タスク名> の review.md 第N回の指摘を直して」と頼み、4 に戻る。達していたら保留する
