@@ -135,7 +135,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 1. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）
 2. `repo-files/docs/team/` をリポジトリの `docs/team/` に置き（common-rules.md・Ganesha.md・workflow.md の3つが入る）、`CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
 3. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す
-4. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す（`invoke-codex.ps1` の `$SecretPatterns` も同じにそろえる）
+4. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す（フックの `SECRET_PATTERNS`・ラッパーの `$SecretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。健さんの AGENTS.md は、読むリポジトリのフックを見るので直さなくてよい）
 5. 健さん（Codex）を使うなら
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
    - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
@@ -151,4 +151,4 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 - **Bash・PowerShell 経由の書き込みは止まらない**：`echo > file` や `sed -i`、PowerShell の `Set-Content` のようなシェル経由の書き込みは、このフックの対象外。
   **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
-- **秘密情報**：フックの `SECRET_PATTERNS` と settings.json の `Read(...)` の deny を、案件に応じて追加・削除する
+- **秘密情報**：案件に応じて、パターンを追加・削除する（フックの `SECRET_PATTERNS`・ラッパーの `$SecretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。健さんの AGENTS.md は、読むリポジトリのフックを見るので直さなくてよい）
