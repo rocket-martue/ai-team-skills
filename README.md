@@ -134,15 +134,69 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ## 導入方法
 
-1. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）
-2. `repo-files/docs/team/` をリポジトリの `docs/team/` に置き（common-rules.md・Ganesha.md・workflow.md の3つが入る）、`CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
-3. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す
-4. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す（フックの `SECRET_PATTERNS`・ラッパーの `$SecretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。健さんの AGENTS.md は、読むリポジトリのフックを見るので直さなくてよい）
-5. 健さん（Codex）を使うなら
+1. テンプレートの写す版を先に決める。最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを写す版として書き留める。その版の中身（`git show` などで読む）から写す。詳しいやり方は「テンプレートを直した後の反映」の「写す版を決める」を参照（作業の途中でテンプレートが進んでも、その版のまま反映するため）
+2. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）
+3. `repo-files/docs/team/` をリポジトリの `docs/team/` に置き（common-rules.md・Ganesha.md・workflow.md の3つが入る）、`CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
+4. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す
+5. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す（フックの `SECRET_PATTERNS`・ラッパーの `$SecretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。健さんの AGENTS.md は、読むリポジトリのフックを見るので直さなくてよい）
+6. 健さん（Codex）を使うなら
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
    - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
-   - `docs/tasks/*/codex/` は健さんの返事の保存先で、Git に入れない（次の手順 6 の snippet に入っている）
-6. `repo-files/gitignore.snippet` の行を、リポジトリの `.gitignore` に足す（健さんを使うかどうかに関係なく。`.claude/worktrees/` は worktree の置き場所）
+   - `docs/tasks/*/codex/` は健さんの返事の保存先で、Git に入れない（次の手順 7 の snippet に入っている）
+7. `repo-files/gitignore.snippet` の行を、リポジトリの `.gitignore` に足す（健さんを使うかどうかに関係なく。`.claude/worktrees/` は worktree の置き場所）
+8. 導入の PR を作るときは、PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）
+
+## テンプレートを直した後の反映
+
+テンプレートに直しが入ったときは、各リポジトリのセッションで反映させる。そのリポジトリのフックと権限が効くため。頼み方の例：「rocket-martue/ai-team-skills の最新を反映して」（反映のイシューがあれば、その番号も）。
+
+### 前回の版を探す
+
+前回の**全体の反映**の PR の題名に書いた版。その後に、部分的な反映（一部のファイルだけを先に入れたもの）や反映先での戻しがあれば、差分に出てくるので、中身で見比べる。
+
+### 写す版を決める
+
+1. テンプレートを `git -C <テンプレート> fetch origin` する
+2. `origin/main` のコミットを写す版として plan.md に書いて固定する（計画・実装・PR の題名で版をそろえるため）
+3. 作業の途中でテンプレートが進んでも、その版のまま反映する
+4. その版の中身は、`git -C <テンプレート> show <写す版>:<パス>` や、その版を指定した `git diff` で読む。テンプレートのチェックアウトのファイルからは写さない（`fetch` だけでは作業ツリーが古いままで、記録した版と中身がずれるため）
+
+### 差分を見る
+
+テンプレートの `git log <前回の版>..<写す版>` と `git diff <前回の版> <写す版>` を、次の範囲に絞って見る：
+- `claude/`
+- `repo-files/docs/team/`
+- `repo-files/gitignore.snippet`
+- `repo-files/CLAUDE.md.snippet`
+- `repo-files/codex/AGENTS.md`
+
+置き場所の対応は「導入方法」のとおり（`claude/` → `.claude/`、`repo-files/docs/team/` → `docs/team/`）。
+
+前回の版が分からないとき（前回の全体の反映の PR の題名に版が無いなど）は、差分ではなく、写す版のファイル全体と、そのリポジトリのファイルを見比べる（最初の導入と同じ）。
+
+### 取り入れるかを決める
+
+変更ごとに、そのリポジトリの固有の上書き（チェックコマンド・`SECRET_PATTERNS`・レビューの観点・plan.md の雛形・settings.json の allow など）と見比べて、取り入れるかを決める。取り入れないものは、PR 本文の「残したもの」に理由を書く。テンプレートが持たないもの（ボードの Status など）を使っているなら、固有の上書きとして残してよい。
+
+### テンプレートに戻す
+
+反映先で足した直しのうち、どのリポジトリにも効きそうなものは、テンプレートのイシューに書く（テンプレートに戻すため）。
+
+### 流れ
+
+ふつうのタスクと同じ（plan-writer → メジェド → diff-reviewer → 健さん → PR）。ただし、テンプレートでレビュー済みの変更を写すのが中心なので、承認前の Fable は省く。ほかは workflow.md どおり（承認前の健さんの consult、チェックが2回以上落ちたときの consult、PR の前の review）。まーちゅうに頼まれたら Fable も回す。
+
+### PR の題名
+
+全体の反映の PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）。部分的な反映では、題名にこの形を書かない（次の反映の始まりと取り違えないため）。版は本文に書く。
+
+### AGENTS.md の扱い
+
+`repo-files/codex/AGENTS.md` が変わっていたら、PR の「マージの後」にその差分を書いて伝える。各 PC の `<CODEX_HOME>/AGENTS.md` は、まーちゅうの許可を得てから、見比べて合わせる（リポジトリの外。個人の設定を上書きしないため。「導入方法」の6と同じ）。
+
+### マージの後
+
+そのリポジトリのメインのチェックアウトを追いつかせ、そのリポジトリのウィンドウを再読み込みする（`.claude/` はセッションの開始時に読まれるため）。
 
 ## 導入後に確認すること
 
