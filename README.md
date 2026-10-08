@@ -82,6 +82,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | --- | --- |
 | `git diff` / `log` / `status` / `show` | 許可 |
 | `git add` / `commit` / `push` / `switch`、`gh pr` | 確認付き（まーちゅうに頼まれたときだけガネーシャが行う） |
+| `git pull` | 確認付き（`--ff-only` を付けないと merge コミットを作れて、`git merge` の禁止をすり抜けるため、許可には置かない。マージの後は `--ff-only` を付けて使う。確認のダイアログで `--ff-only` が付いているかを見られる） |
 | `git stash` / `restore` / `clean` / `rm` / `worktree remove`、`git branch`（引数の有無を問わず全部） | 確認付き（コミット前の作業か、マージ前のブランチを消せるため。ブランチの削除は `-fD`・`-f -d`・`--force --delete` のように書き方がいくつもあってルールの形で潰しきれないので、`git branch` は全部確認にする。ブランチの名前は `git status` で分かる） |
 | `git -C` / `-c` / `--git-dir` / `--work-tree` / `--no-pager` で始まる git | 確認付き（deny は先頭一致なので、大域オプションで始まると `git reset` などの禁止をすり抜けるため。「worktree で作業するとき」を参照） |
 | `git checkout` / `merge` / `rebase` / `reset`、`gh pr merge` | 禁止 |
@@ -108,6 +109,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 3. PR：「コミットして PR を出して」→ ガネーシャがコミット・push・PR 作成。マージはしない
 4. PR のレビュー：「PR の指摘を見て」→ PR の指摘は `diff-reviewer` で受ける（ユーザー共通のレビュー用のスキルがあっても）。ガネーシャが検証して review.md に書き、コードの指摘はメジェドに直させ、スレッドに返信する（Copilot のレビューは1回だけ。再レビューを頼むかはまーちゅうが決める）
 5. マージ：まーちゅう
+6. マージの後：「マージした」→ ガネーシャが既定ブランチを origin に追いつかせる（`delegate-to-mejed` の「マージの後」）
 
 GitHub Projects のボードを使うなら、ユーザー側の手順で動かす（このテンプレートは持たない）。
 

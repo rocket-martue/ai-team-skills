@@ -212,6 +212,7 @@ try {
 		'Bash(git rm:*)',
 		'Bash(git branch:*)',
 		'Bash(git worktree remove:*)',
+		'Bash(git pull:*)',
 	]) {
 		check(`settings.json の ask に ${rule} がある`, ask.includes(rule));
 	}
