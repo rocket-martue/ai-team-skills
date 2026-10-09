@@ -188,25 +188,84 @@ function Get-ReplyRoot {
 	return $RepoRoot
 }
 
-function Save-Reply {
-	param([string] $Text)
-	$dir = Join-Path (Get-ReplyRoot) ("docs\tasks\$Task\codex")
-	New-Item -ItemType Directory -Path $dir -Force | Out-Null
-	# 連番は「今ある一番大きい番号 + 1」。同じ名前があれば上書きせず次の番号にする（欠番や同時の呼び出しで消さないため）
+# 保存する名前が、Git に無視されるか（リポジトリの根 $Root で `git check-ignore`。終了コード 0 のときだけ真）。
+# git が失敗したとき（Git のリポジトリでない・128）は偽にして、一時ディレクトリに保存する
+function Test-ReplyIgnored {
+	param([string] $Root, [string] $RelPath)
+	$previous = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		& git -C $Root check-ignore -q -- $RelPath 2>$null
+		$code = $LASTEXITCODE
+	} catch {
+		$code = 1
+	} finally {
+		$ErrorActionPreference = $previous
+	}
+	return ($code -eq 0)
+}
+
+# 返事の保存先（Git に無視されていないときに使う、OS の一時ディレクトリの下のフォルダ）。
+# 根の識別子は「根の最後のフォルダの名前 + - + 根のパスの SHA-256 の先頭8文字」
+# （同じ名前で親の違うリポジトリが混ざらないため。小文字にそろえるのは、C: と c: の違いで別の場所にしないため）
+function Get-TempReplyDir {
+	param([string] $ReplyRoot)
+	$key = $ReplyRoot.ToLowerInvariant().Replace('\', '/')
+	$sha = [System.Security.Cryptography.SHA256]::Create()
+	try {
+		$hash = $sha.ComputeHash($utf8.GetBytes($key))
+	} finally {
+		$sha.Dispose()
+	}
+	$hex = -join ($hash | ForEach-Object { $_.ToString('x2') })
+	$id = (Split-Path -Leaf $ReplyRoot) + '-' + $hex.Substring(0, 8)
+	return (Join-Path ([System.IO.Path]::GetTempPath()) (Join-Path 'codex-replies' (Join-Path $id $Task)))
+}
+
+# 保存先のフォルダにある返事の一番大きい連番（フォルダが無ければ 0）
+function Get-MaxReplyNumber {
+	param([string] $Dir)
 	$max = 0
-	foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -File)) {
+	if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return 0 }
+	foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter '*.md' -File)) {
 		if ($f.Name -match '^(\d+)-') { $n = [int]$Matches[1]; if ($n -gt $max) { $max = $n } }
 	}
+	return $max
+}
+
+# 返事を保存して、保存先を返す（リポジトリの中なら相対パス、一時ディレクトリなら絶対パス）
+function Save-Reply {
+	param([string] $Text)
+	$replyRoot = Get-ReplyRoot
+	$repoRel = "docs/tasks/$Task/codex"
+	$dir = Join-Path $replyRoot ("docs\tasks\$Task\codex")
+	$switched = $false
 	$bytes = $utf8.GetBytes($Text)
-	for ($n = $max + 1; $n -le $max + 100; $n++) {
+	# 連番は「今ある一番大きい番号 + 1」。同じ名前があれば上書きせず次の番号にする（欠番や同時の呼び出しで消さないため）
+	$base = Get-MaxReplyNumber $dir
+	for ($n = $base + 1; $n -le ($base + 100); $n++) {
 		$name = '{0:D2}-{1}.md' -f $n, $Mode
+		if (-not $switched) {
+			# 無視されているかは、実際に保存する名前で確かめる（仮の名前では、除外の除外（!の行）を見落とすため）
+			if (-not (Test-ReplyIgnored $replyRoot "$repoRel/$name")) {
+				# 無視されていなければ、リポジトリには何も作らず、一時ディレクトリに続きの連番で保存する
+				$switched = $true
+				$dir = Get-TempReplyDir $replyRoot
+				$base = Get-MaxReplyNumber $dir
+				$n = $base
+				[Console]::Error.WriteLine("invoke-codex: $replyRoot では docs/tasks/*/codex/ が Git に無視されていないので、返事を一時ディレクトリに保存しました（リポジトリに未追跡のファイルを残さないため）")
+				continue
+			}
+		}
+		New-Item -ItemType Directory -Path $dir -Force | Out-Null
 		try {
 			$stream = [System.IO.File]::Open((Join-Path $dir $name), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
 		} catch [System.IO.IOException] {
 			continue
 		}
 		try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
-		return "docs/tasks/$Task/codex/$name"
+		if ($switched) { return (Join-Path $dir $name) }
+		return "$repoRel/$name"
 	}
 	Stop-Wrapper "返事の保存先の名前が決められませんでした: $dir"
 }

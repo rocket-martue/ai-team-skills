@@ -131,7 +131,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 - worktree を作るのは gh-issue スキル（まーちゅうに頼まれたとき）だけ。置き場所はリポジトリの中の `.claude/worktrees/<名前>/`。plan-writer・delegate-to-mejed は worktree もブランチも作らない。使わないときは、今のまま（作業ツリーで `git switch -c`）
 - worktree のパス（`.claude/worktrees/<名前>`）は、メジェド・健さん・スキルどうしで渡すとき、リポジトリの根からの相対パスで書く（まーちゅうへの返事のパスは、plan-writer の手順7のとおり。Git Bash の `/c/...` 形は Node.js と PowerShell で別のパスになるため）
 - plan.md も review.md も worktree の中の `docs/tasks/<タスク名>/` に書く（メインのチェックアウトの未コミットのファイルは worktree から見えないため）
-- git は `git -C <パス>`。ほかのコマンド（チェックコマンドなど）は `(cd <パス> && <コマンド>)`。健さんのラッパーは `-WorkingDirectory <パス>`（返事はメインのチェックアウトの `docs/tasks/<タスク名>/codex/` に残る）
+- git は `git -C <パス>`。ほかのコマンド（チェックコマンドなど）は `(cd <パス> && <コマンド>)`。健さんのラッパーは `-WorkingDirectory <パス>`（返事はメインのチェックアウトの `docs/tasks/<タスク名>/codex/` に残る。そこが Git に無視されていなければ、一時ディレクトリに残る。codex スキルの「ラッパーがしてくれること」）
 - フックは `.claude/worktrees/<名前>/` の頭を剥がして、メインのチェックアウトと同じ判定をする。秘密情報の判定だけは、剥がす前のパスにも当てる
 - settings.json の `deny` は先頭一致なので、`git -C <パス> reset --hard` は `Bash(git reset:*)` に当たらない。そこで ask に大域オプションで始まる git（`git -C`・`git -c`・`git --git-dir`・`git --work-tree`・`git --no-pager`）を足してある。**worktree での git は毎回確認が出る**（手間として受け入れる）。この柵は、うっかり別の書き方で打つのを止めるもの。`sh -c '...'` で包む・パスで git を呼ぶなど、わざと別の形にするものは防がない（サンドボックスの役目）
 
