@@ -3,7 +3,7 @@
 Claude Code だけで回す体制のスキル・チーム設定・権限設定。
 
 - **ガネーシャ**（Claude Code のメイン）＝ 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応
-- **メジェド**（サブエージェント `mejed`・Sonnet）＝ 実装・指摘の修正
+- **メジェド**（サブエージェント `mejed`・既定は Haiku。plan.md で Sonnet を選べる）＝ 実装・指摘の修正
 - **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前に、1つの計画につき1回だけ、計画書を壊す側から読んで指摘だけを返す。直さない
 - **健さん**（Codex CLI・外部委託業者）＝ 読むだけの相談・レビューと、画像の生成。スキル `codex` から呼ぶ。実装は頼まない。承認前・チェックが2回以上落ちたとき・PR の前の確認の中心
 - **まーちゅう** ＝ 要件決定・計画の承認・最終確認・マージ
@@ -22,7 +22,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `repo-files/docs/team/Ganesha.md` | ガネーシャ | リポジトリの `docs/team/Ganesha.md` |
 | `repo-files/docs/team/workflow.md` | 全員 | リポジトリの `docs/team/workflow.md`。作業の流れ（フローチャート・言葉の決まり・回数の上限）の正本 |
 | `repo-files/CLAUDE.md.snippet` | ガネーシャ | 中身を `CLAUDE.md` の先頭に追記 |
-| `claude/agents/mejed.md` | メジェド | `.claude/agents/mejed.md`。キャラ・手順・報告の形式・禁止事項。モデルは Sonnet |
+| `claude/agents/mejed.md` | メジェド | `.claude/agents/mejed.md`。キャラ・手順・報告の形式・禁止事項。モデルは Haiku（既定。plan.md の「メジェドのモデル」で Sonnet を選べる。呼ぶたびに model を明示して渡す） |
 | `claude/agents/adversary.md` | adversary | `.claude/agents/adversary.md`。計画の問い・報告の形式・禁止事項。モデルは Fable |
 | `claude/skills/plan-writer/` | ガネーシャ | `.claude/skills/plan-writer/`。承認を頼む前に、Fable を1回、その後は健さんを採る指摘が0になるまで呼ぶ |
 | `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を回す。PR の前に健さんの review を、採る指摘が0になるまで回す |
