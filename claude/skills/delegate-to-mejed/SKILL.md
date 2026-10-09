@@ -14,7 +14,7 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
 1. `docs/tasks/<タスク名>/plan.md` を読み、承認欄にチェックがあるか確認する。なければ止めて、まーちゅうに承認を依頼する（頼み方は plan-writer の手順7のとおり。plan.md を開ける形で渡し、要点をまとめる）
    - 承認欄にチェックがあっても、「確認事項」に未解決（基準は workflow.md の「確認事項の未解決」）が残っていれば、メジェドを呼ぶ前に保留する
 2. 作業ツリーを確かめる。**タスクは1本ずつ。**
-   - `git status --short --branch` で、別タスクの未コミットの変更が無いことを確かめる。あれば止めて、まーちゅうに報告する（plan.md と review.md だけなら、このタスクのものか確かめる）
+   - `git status --short --branch` で、別タスクの未コミットの変更が無いことを確かめる。あれば止めて、まーちゅうに報告する（plan.md と review.md だけなら、このタスクのものか確かめる。簡単な修正の道から移ってきた直しで、plan.md の対象ファイルに書いてあるものも同じ）
    - `git fetch origin` で最新にする（worktree のときは `git -C <パス> fetch origin`）
    - 既定のブランチと `<owner>/<name>` を、origin を引数にして求める：`gh repo view "$(git remote get-url origin)" --json defaultBranchRef,nameWithOwner`（環境変数 `GH_REPO` があっても origin と食い違わないようにするため。worktree のときは `git -C <パス> remote get-url origin`）。手順8の `gh pr create` で両方の値が要る
    - **worktree で作業するとき（次の「ブランチを切る」の代わりに）**（plan.md が `.claude/worktrees/<名前>/docs/tasks/<タスク名>/` にあるなど、gh-issue が worktree を用意している）：その `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）を作業ツリーとする。worktree もブランチもここでは作らず、`git switch -c` はしない。git は `git -C <パス>` で打ち（`git status --short --branch` も同じ）、ほかのコマンドは `(cd <パス> && <コマンド>)` で打つ。`git -C` は settings.json の ask で毎回確認が出る
