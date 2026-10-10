@@ -25,7 +25,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `claude/agents/mejed.md` | メジェド | `.claude/agents/mejed.md`。キャラ・手順・報告の形式・禁止事項。モデルは Haiku（既定。plan.md の「メジェドのモデル」で Sonnet を選べる。呼ぶたびに model を明示して渡す） |
 | `claude/agents/adversary.md` | adversary | `.claude/agents/adversary.md`。計画の問い・報告の形式・禁止事項。モデルは Fable |
 | `claude/skills/plan-writer/` | ガネーシャ | `.claude/skills/plan-writer/`。承認を頼む前に、Fable を1回、その後は健さんを採る指摘が0になるまで呼ぶ |
-| `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を回す。PR の前に健さんの review を、採る指摘が0になるまで回す |
+| `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を回す。PR の前に健さんの review を、採る指摘が0になるまで回す（画像のタスクでは回さず、まーちゅうが画像を目で見る） |
 | `claude/skills/diff-reviewer/` | ガネーシャ | `.claude/skills/diff-reviewer/`。PR 前の差分レビューと、PR に付いた指摘の対応 |
 | `claude/skills/codex/` | ガネーシャ・メジェド | `.claude/skills/codex/`。健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
 | `claude/skills/codex/scripts/test-invoke-codex.mjs` | ガネーシャ・メジェド | `.claude/skills/codex/scripts/test-invoke-codex.mjs`。ラッパーの review の前の秘密情報の確かめの確認（`node .claude/skills/codex/scripts/test-invoke-codex.mjs`）。偽物の `codex` と仮の Git のリポジトリだけを使い、本物の健さんは呼ばない |
@@ -105,7 +105,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 **タスクは1本ずつ回す。** 2本を同じ作業ツリーで並行すると、未コミットの変更が混ざる。
 
 1. 計画：「<タスク名> の計画を立てて」→ ガネーシャが plan.md を書き（プランモードは使わない）、Fable に1回、続けて健さんに採る指摘が0になるまで壊しに来させて直す → ガネーシャは plan.md を開ける形で渡し、要点をまとめて承認を頼む → まーちゅうが会話で承認する（承認欄の扱いは workflow.md の「承認欄」）
-2. 実装：「<タスク名> をメジェドに実装してもらって」→ ガネーシャが plan.md の「ブランチ」欄のブランチを切ってメジェドを呼び、レビュー→修正を回す。チェックが2回以上落ちていたら健さんに「隠しただけか」を見させる。OK になったら PR の前に健さんの review を回し、片付いたら報告してくる
+2. 実装：「<タスク名> をメジェドに実装してもらって」→ ガネーシャが plan.md の「ブランチ」欄のブランチを切ってメジェドを呼び、レビュー→修正を回す。チェックが2回以上落ちていたら健さんに「隠しただけか」を見させる。OK になったら PR の前に健さんの review を回し（画像のタスクでは、健さんの review の代わりにまーちゅうが画像を目で見る）、片付いたら報告してくる
 3. PR：「コミットして PR を出して」→ ガネーシャがコミット・push・PR 作成。マージはしない
 4. PR のレビュー：「PR の指摘を見て」→ PR の指摘は `diff-reviewer` で受ける（ユーザー共通のレビュー用のスキルがあっても）。ガネーシャが検証して review.md に書き、コードの指摘はメジェドに直させ、スレッドに返信する（Copilot のレビューは1回だけ。再レビューを頼むかはまーちゅうが決める）。簡単な修正の道で作った PR は、`workflow.md` の「簡単な修正の道」に従う（review.md は作らない）
 5. マージ：まーちゅう
@@ -121,7 +121,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 - 計画：書いたら Fable（adversary・plan）に壊しに来させる（1つの計画につき1回）。その後は健さんに、採る指摘が0になるまで頼む（最大5回）
 - 実装：メジェドの報告を受けるたびに、停止なら保留、「途中で2回以上落ちたチェック」があれば健さん（consult）
-- PR の前：diff-reviewer が OK なら、健さんの review を、採る指摘が0になるまで回す（最大5回）。`/code-review` は頼まれたときだけ
+- PR の前：diff-reviewer が OK なら、健さんの review を、採る指摘が0になるまで回す（最大5回）。画像のタスクでは、健さんの review の代わりにまーちゅうが画像を目で見る。`/code-review` は頼まれたときだけ
 - diff-reviewer の指摘による修正依頼は最大3回。PR に付いたレビューでの修正依頼は別に最大3回。上限に達したら保留して、まーちゅうに判断を頼む
 - 承認をやり直したら、上限は数え直す（Fable は数え直さない）
 - 簡単な修正：まーちゅうの OK で、ガネーシャが直して健さんの review だけを通す（範囲は workflow.md）
