@@ -405,6 +405,49 @@ try {
 		check('readConfig: lstat が ENOTDIR なら無い扱い', readConfig(cand, failWith('ENOTDIR')).status === 'none');
 	}
 
+	// check --resolve-real：リンクの先の実体も照らす（ジャンクションを作れない環境では飛ばす）
+	{
+		const configModule = path.join(here, 'ai-team-config.mjs');
+		const rootR = path.join(sandbox, 'resolve-real');
+		const far = path.join(sandbox, 'resolve-real-far');
+		mkdirSync(path.join(rootR, '.kv'), { recursive: true });
+		mkdirSync(path.join(rootR, 'src'), { recursive: true });
+		mkdirSync(far, { recursive: true });
+		writeFileSync(path.join(rootR, '.kv', 'a.md'), 'x');
+		writeFileSync(path.join(rootR, 'src', 'a.md'), 'x');
+		writeFileSync(path.join(far, 'a.md'), 'x');
+		const runCheck = (relPaths, flag) => {
+			const pathsFile = path.join(sandbox, 'resolve-real-paths.bin');
+			const outFile = path.join(sandbox, 'resolve-real-out.txt');
+			writeFileSync(pathsFile, relPaths.join('\0'));
+			rmSync(outFile, { force: true });
+			const args = [configModule, 'check', '--root', rootR, '--paths-file', pathsFile, '--out', outFile];
+			if (flag) {
+				args.push('--resolve-real');
+			}
+			const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
+			return r.status;
+		};
+		let linked = true;
+		try {
+			symlinkSync(path.join(rootR, '.kv'), path.join(rootR, 'vault'), 'junction');
+			symlinkSync(far, path.join(rootR, 'outside'), 'junction');
+		} catch {
+			linked = false;
+		}
+		if (linked) {
+			check('check: 親が .kv/ へのジャンクションのパスは、--resolve-real なしでは通る（今までどおり）', runCheck(['vault/a.md'], false) === 0);
+			check('check --resolve-real: 親が .kv/ へのジャンクションのパスは止まる（終了コード 3）', runCheck(['vault/a.md'], true) === 3);
+			check('check --resolve-real: 実体が根の外のパスは止まる（終了コード 3）', runCheck(['outside/a.md'], true) === 3);
+			check('check --resolve-real: ふつうのパスは通る', runCheck(['src/a.md'], true) === 0);
+			check('check --resolve-real: まだ無いファイル（ジャンクションの下の新規）も止まる', runCheck(['vault/new.md'], true) === 3);
+		} else {
+			console.log('skip check --resolve-real の確かめ（ジャンクションを作れない環境）');
+		}
+		check('check --resolve-real: ふつうのパスは通る（リンクが無くても）', runCheck(['src/a.md'], true) === 0);
+		check('check --resolve-real: 付けても、直接 .kv/ のパスは止まる', runCheck(['.kv/a.md'], true) === 3);
+	}
+
 	// フックの登録は、シェルを通さない書き方
 	const registered = (settings.hooks?.PreToolUse || []).flatMap((entry) => entry.hooks || []);
 	const guard = registered.find((h) => (h.args || []).some((a) => a.includes('guard-code-edit.mjs')));

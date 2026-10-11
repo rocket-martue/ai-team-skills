@@ -235,13 +235,16 @@ export function isSecretPath(rel, extraRegexps = []) {
 }
 
 // ---- ラッパーから呼ぶ入口 ----
-// node ai-team-config.mjs check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル>
+// node ai-team-config.mjs check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル> [--resolve-real]
+// --resolve-real：各パス（最初の --root からの相対パス）の実体（リンクをたどった先）も照らす。実体が根の外・実体を判定できない（リンク切れ）ときも当たりとする。
+// ファイルの中身を渡すとき（make-patch）に付ける。付けないときの動きは変えない
 // 終了コード：0 = 当たるパスなし / 1 = 引数やファイルの読み込みの失敗 / 2 = 設定ファイルが壊れている / 3 = 秘密情報に当たるパスがある
 function cli(argv) {
 	const [command, ...rest] = argv;
 	const roots = [];
 	let pathsFile = '';
 	let outFile = '';
+	let resolveReal = false;
 
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === '--root' && i + 1 < rest.length) {
@@ -250,6 +253,8 @@ function cli(argv) {
 			pathsFile = rest[++i];
 		} else if (rest[i] === '--out' && i + 1 < rest.length) {
 			outFile = rest[++i];
+		} else if (rest[i] === '--resolve-real') {
+			resolveReal = true;
 		} else {
 			process.stderr.write(`ai-team-config: 知らない引数です: ${rest[i]}\n`);
 			return 1;
@@ -257,7 +262,7 @@ function cli(argv) {
 	}
 
 	if (command !== 'check' || roots.length === 0 || pathsFile === '' || outFile === '') {
-		process.stderr.write('ai-team-config: 使い方: check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル>\n');
+		process.stderr.write('ai-team-config: 使い方: check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル> [--resolve-real]\n');
 		return 1;
 	}
 
@@ -292,6 +297,39 @@ function cli(argv) {
 	}
 
 	const hits = paths.filter((p) => isSecretPath(p.replace(/\\/g, '/'), extra));
+
+	if (resolveReal) {
+		const base = roots[0];
+		const baseReal = realPath(base);
+
+		for (const p of paths) {
+			if (hits.includes(p)) {
+				continue;
+			}
+
+			const real = realPath(path.join(base, ...p.replace(/\\/g, '/').split('/')));
+
+			if (real === null || baseReal === null) {
+				hits.push(p);
+				continue;
+			}
+
+			const rel = path.relative(baseReal, real);
+
+			if (rel === '') {
+				continue;
+			}
+
+			if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+				hits.push(p);
+				continue;
+			}
+
+			if (isSecretPath(rel.replace(/\\/g, '/'), extra)) {
+				hits.push(p);
+			}
+		}
+	}
 
 	if (hits.length > 0) {
 		try {
