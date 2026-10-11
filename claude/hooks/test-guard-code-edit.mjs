@@ -5,7 +5,7 @@
 // git は呼ばない。依存なし。
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,15 +51,15 @@ function judgeResult(name, result, expected) {
 	console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}（期待 ${expected}・実際 ${result.status}）`);
 }
 
-function run(name, { file, agent = 'main' }, expected) {
-	const input = { tool_name: 'Edit', tool_input: { file_path: file }, cwd: project };
+function run(name, { file, agent = 'main', proj = project }, expected) {
+	const input = { tool_name: 'Edit', tool_input: { file_path: file }, cwd: proj };
 	if (agent !== 'main') {
 		input.agent_id = 'a1';
 		input.agent_type = agent;
 	}
 	const result = spawnSync(process.execPath, [hook], {
 		input: JSON.stringify(input),
-		env: { ...process.env, CLAUDE_PROJECT_DIR: project },
+		env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
 		encoding: 'utf8',
 	});
 	judgeResult(name, result, expected);
@@ -189,6 +189,167 @@ try {
 	run('リンク: リンク先が秘密情報なら止まる（ガネーシャ）', { file: p('vault', 'a.md') }, 2);
 	run('リンク: リンク先が秘密情報なら止まる（メジェド）', { file: p('vault', 'a.md'), ...MEJED }, 2);
 
+	// ---- 設定ファイル（.claude/ai-team.json） ----
+	const configPath = p('.claude', 'ai-team.json');
+	// 設定ファイルを書いて fn を回し、消す。content は文字列かバッファ
+	const withConfig = (content, fn) => {
+		mkdirSync(p('.claude'), { recursive: true });
+		writeFileSync(configPath, content);
+		try {
+			fn();
+		} finally {
+			rmSync(configPath, { force: true });
+		}
+	};
+	const j = (obj) => JSON.stringify(obj);
+	const both = (label, file, expected) => {
+		run(`設定 ${label}: ガネーシャ`, { file }, expected);
+		run(`設定 ${label}: メジェド`, { file, ...MEJED }, expected);
+	};
+
+	// 設定ファイルが無いとき：ここまでの確かめが全部、今までどおり通っている
+	run('設定: 設定ファイルが無ければ docs/tasks/ は通る', { file: p('docs', 'tasks', 'x', 'plan.md') }, 0);
+
+	withConfig(j({ secretPatterns: ['**/.wrangler/**'] }), () => {
+		both('.wrangler/ は止まる', p('.wrangler', 'state.json'), 2);
+		both('sub/.wrangler/x は止まる', p('sub', '.wrangler', 'x'), 2);
+		both('worktree の中の .wrangler/ は止まる', p(WT, '.wrangler', 'x'), 2);
+		both('U+2028 を含む .wrangler/ のファイル名も止まる', p('.wrangler', 'state .json'), 2);
+		both('改行を含む .wrangler/ のファイル名も止まる', p('.wrangler', 'state\n.json'), 2);
+		run('設定: wrangler.toml は止まらない（メジェド）', { file: p('wrangler.toml'), ...MEJED }, 0);
+		run('設定: 既定の .dev.vars は設定があっても止まる', { file: p('.dev.vars'), ...MEJED }, 2);
+		run('設定: 設定ファイル自体は ask', { file: configPath }, 'ask');
+		run('設定: 設定ファイル自体は ask（メジェド）', { file: configPath, ...MEJED }, 'ask');
+	});
+
+	withConfig(j({ secretPatterns: ['private/**/token.json'] }), () => {
+		run('設定: private/token.json は止まる', { file: p('private', 'token.json'), ...MEJED }, 2);
+		run('設定: private/a/b/token.json は止まる', { file: p('private', 'a', 'b', 'token.json'), ...MEJED }, 2);
+		run('設定: private/token.jsonx は止まらない', { file: p('private', 'token.jsonx'), ...MEJED }, 0);
+	});
+
+	withConfig(j({ plannerWritable: ['data/*.json'] }), () => {
+		run('設定: data/a.json はガネーシャが通る', { file: p('data', 'a.json') }, 0);
+		run('設定: data/a.json はほかのサブエージェントも通る', { file: p('data', 'a.json'), ...OTHER }, 0);
+		run('設定: data/sub/a.json は止まる', { file: p('data', 'sub', 'a.json') }, 2);
+		run('設定: data/a.jsonx は止まる', { file: p('data', 'a.jsonx') }, 2);
+	});
+
+	withConfig(j({ plannerWritable: ['data/?.json'] }), () => {
+		run('設定: data/a.json は通る（? は1文字）', { file: p('data', 'a.json') }, 0);
+		run('設定: data/ab.json は止まる', { file: p('data', 'ab.json') }, 2);
+	});
+
+	withConfig(j({ plannerWritable: ['a.b/x(1).md.txt'] }), () => {
+		run('設定: 正規表現の記号はただの文字（当たる）', { file: p('a.b', 'x(1).md.txt') }, 0);
+		run('設定: 正規表現の記号はただの文字（. は任意の1文字ではない）', { file: p('axb', 'x(1).md.txt') }, 2);
+	});
+
+	// 壊れているとき：すべての編集を止める。設定ファイル自体は ask
+	const broken = [
+		['JSON として壊れている', '{ not json'],
+		['知らないキー（大文字小文字違い）', j({ SecretPatterns: [] })],
+		['文字列の配列でない（文字列）', j({ secretPatterns: 'x' })],
+		['文字列の配列でない（数）', j({ secretPatterns: [1] })],
+		['最上位が配列', '[]'],
+		['グロブが壊れている [ab]', j({ secretPatterns: ['[ab]'] })],
+		['グロブが壊れている {a,b}', j({ plannerWritable: ['{a,b}'] })],
+		['グロブが空', j({ secretPatterns: [''] })],
+		['グロブが / で始まる', j({ secretPatterns: ['/x'] })],
+		['グロブにバックスラッシュを含む', j({ secretPatterns: ['a\\b'] })],
+		['UTF-16LE（BOM 付き）', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(j({ secretPatterns: [] }), 'utf16le')])],
+	];
+	for (const [label, content] of broken) {
+		withConfig(content, () => {
+			run(`設定が壊れている（${label}）: docs/tasks/x/plan.md も止まる`, { file: p('docs', 'tasks', 'x', 'plan.md') }, 2);
+			run(`設定が壊れている（${label}）: メジェドのコードも止まる`, { file: p('src', 'a.js'), ...MEJED }, 2);
+			run(`設定が壊れている（${label}）: scratchpad も止まる`, { file: path.join(tmpdir(), 'claude', 'a.txt') }, 2);
+			run(`設定が壊れている（${label}）: 設定ファイル自体は ask`, { file: configPath }, 'ask');
+		});
+	}
+
+	// 設定ファイルの中身（秘密情報かもしれない）を、止める理由に出さない
+	withConfig('API_KEY=abc123secret', () => {
+		const input = { tool_name: 'Edit', tool_input: { file_path: p('src', 'a.js') }, cwd: project };
+		const r = spawnSync(process.execPath, [hook], {
+			input: JSON.stringify(input),
+			env: { ...process.env, CLAUDE_PROJECT_DIR: project },
+			encoding: 'utf8',
+		});
+		const leaked = `${r.stdout}${r.stderr}`.includes('abc123secret');
+		const ok = r.status === 2 && !leaked;
+		if (!ok) {
+			failed++;
+		}
+		console.log(`${ok ? 'ok  ' : 'FAIL'} 設定の中身が止める理由に出ない（終了コード ${r.status}・漏れ ${leaked}）`);
+	});
+
+	// 文字コード：UTF-8 の BOM 付きで中身が正しければ、判定する
+	withConfig(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(j({ secretPatterns: ['**/.wrangler/**'] }), 'utf8')]), () => {
+		run('設定: UTF-8 の BOM 付きでも読める（.wrangler/ が止まる）', { file: p('.wrangler', 'x'), ...MEJED }, 2);
+		run('設定: UTF-8 の BOM 付きでも読める（ほかは通る）', { file: p('src', 'a.js'), ...MEJED }, 0);
+	});
+
+	// secretPatterns が設定ファイル自体に当たっても、設定ファイルは ask。ほかは今までどおり
+	withConfig(j({ secretPatterns: ['.claude/ai-team.json'] }), () => {
+		run('設定: 自分に当たるグロブがあっても設定ファイルは ask', { file: configPath }, 'ask');
+		run('設定: 自分に当たるグロブがあっても設定ファイルは ask（メジェド）', { file: configPath, ...MEJED }, 'ask');
+		run('設定: 自分に当たるグロブがあってもほかの編集は今までどおり', { file: p('src', 'a.js'), ...MEJED }, 0);
+	});
+
+	// 設定ファイルが読めたときの設定ファイルの編集は ask
+	withConfig(j({}), () => {
+		run('設定: 読めたときの設定ファイルの編集は ask', { file: configPath }, 'ask');
+		run('設定: 読めたときの設定ファイルの編集は ask（メジェド）', { file: configPath, ...MEJED }, 'ask');
+	});
+
+	// リンク（作れない環境では飛ばす）
+	const trySymlink = (target, linkPath, type) => {
+		try {
+			symlinkSync(target, linkPath, type);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	// 設定ファイルが、リンク先のある .env へのシンボリックリンク
+	mkdirSync(p('.claude'), { recursive: true });
+	writeFileSync(p('.env'), j({}));
+	if (trySymlink(p('.env'), configPath, 'file')) {
+		run('設定: 設定ファイルが .env へのリンクなら、設定ファイルの編集は止まる', { file: configPath }, 2);
+		run('設定: 設定ファイルが .env へのリンクなら、設定ファイルの編集は止まる（メジェド）', { file: configPath, ...MEJED }, 2);
+		unlinkSync(configPath);
+	} else {
+		console.log('skip 設定ファイルが .env へのリンクの確かめ（シンボリックリンクを作れない環境）');
+	}
+	rmSync(p('.env'), { force: true });
+
+	// 設定ファイルがリンク切れのシンボリックリンク
+	if (trySymlink(p('no-such-target.json'), configPath, 'file')) {
+		run('設定: 設定ファイルがリンク切れなら docs/tasks/x/plan.md も止まる', { file: p('docs', 'tasks', 'x', 'plan.md') }, 2);
+		run('設定: 設定ファイルがリンク切れなら設定ファイル自体も止まる', { file: configPath }, 2);
+		run('設定: 設定ファイルがリンク切れなら設定ファイル自体も止まる（メジェド）', { file: configPath, ...MEJED }, 2);
+		unlinkSync(configPath);
+	} else {
+		console.log('skip 設定ファイルがリンク切れの確かめ（シンボリックリンクを作れない環境）');
+	}
+
+	// 親の .claude がリンク切れ（ジャンクション）
+	{
+		const proj2 = path.join(sandbox, 'repo2');
+		const gone = path.join(sandbox, 'gone');
+		mkdirSync(proj2, { recursive: true });
+		mkdirSync(gone, { recursive: true });
+		if (trySymlink(gone, path.join(proj2, '.claude'), linkType)) {
+			rmSync(gone, { recursive: true, force: true });
+			run('設定: 親の .claude がリンク切れなら docs/tasks/x/plan.md も止まる', { file: path.join(proj2, 'docs', 'tasks', 'x', 'plan.md'), proj: proj2 }, 2);
+			run('設定: 親の .claude がリンク切れなら設定ファイル自体も止まる', { file: path.join(proj2, '.claude', 'ai-team.json'), proj: proj2 }, 2);
+		} else {
+			console.log('skip 親の .claude がリンク切れの確かめ（リンクを作れない環境）');
+		}
+	}
+
 	// ---- settings.json ----
 	const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
 	const ask = settings.permissions?.ask || [];
@@ -226,6 +387,22 @@ try {
 			const ps = rule.replace(/^Bash\(/, 'PowerShell(');
 			check(`settings.json の ${listName} に ${ps} がある`, list.includes(ps));
 		}
+	}
+
+	// readConfig: lstat が ENOENT 以外で失敗するとき（アクセス権の失敗は環境で作れないので、lstat を差し替えて確かめる）
+	{
+		const { readConfig } = await import('./ai-team-config.mjs');
+		const failWith = (code) => () => {
+			const e = new Error('secret-looking text');
+			e.code = code;
+			throw e;
+		};
+		const cand = [path.join(project, '.claude', 'ai-team.json')];
+		const eacces = readConfig(cand, failWith('EACCES'));
+		check('readConfig: lstat が EACCES で失敗したら壊れている扱い', eacces.status === 'broken' && !eacces.link);
+		check('readConfig: 壊れている理由に OS のエラーの文を入れない', eacces.status === 'broken' && !eacces.reason.includes('secret-looking'));
+		check('readConfig: lstat が ENOENT なら無い扱い', readConfig(cand, failWith('ENOENT')).status === 'none');
+		check('readConfig: lstat が ENOTDIR なら無い扱い', readConfig(cand, failWith('ENOTDIR')).status === 'none');
 	}
 
 	// フックの登録は、シェルを通さない書き方

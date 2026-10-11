@@ -43,23 +43,6 @@ function Stop-Wrapper {
 	exit $Code
 }
 
-# 秘密情報のパターン（テンプレートの guard-code-edit.mjs の SECRET_PATTERNS と同じ。リポジトリに合わせて足す）
-$SecretPatterns = @(
-	'(^|/)\.dev\.vars$',
-	'(^|/)\.kv/',
-	'(^|/)wp-config\.php$',
-	'(^|/)\.env[^/]*$'
-)
-
-function Test-SecretPath {
-	param([string] $Path)
-	$p = $Path.Replace('\', '/').ToLowerInvariant()
-	foreach ($re in $SecretPatterns) {
-		if ($p -match $re) { return $true }
-	}
-	return $false
-}
-
 # ---- 呼ぶ前の確認 ----
 
 if ([string]::IsNullOrWhiteSpace($Task)) {
@@ -81,6 +64,30 @@ if (-not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
 }
 $RepoRoot = (Resolve-Path -LiteralPath $WorkingDirectory).Path
 
+# 返事の保存先の根。worktree から呼ばれても、メインのチェックアウト（worktree list の1件目）にする。
+# 求められなければ（git が失敗・worktree でない）、作業の根のまま。
+function Get-ReplyRoot {
+	$previous = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		$lines = @(& git -C $RepoRoot worktree list --porcelain 2>$null)
+		$code = $LASTEXITCODE
+	} catch {
+		$code = 1
+	} finally {
+		$ErrorActionPreference = $previous
+	}
+	if ($code -ne 0) { return $RepoRoot }
+	foreach ($line in $lines) {
+		if ($line -match '^worktree (.+)$') {
+			$main = $Matches[1].Trim().Replace('/', '\')
+			if (Test-Path -LiteralPath $main -PathType Container) { return (Resolve-Path -LiteralPath $main).Path }
+			return $RepoRoot
+		}
+	}
+	return $RepoRoot
+}
+
 $Prompt = ''
 if ($Mode -ne 'review') {
 	if ([string]::IsNullOrWhiteSpace($PromptFile) -or -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) {
@@ -92,9 +99,12 @@ if ($Mode -ne 'review') {
 	}
 }
 
+# ---- 設定ファイルと秘密情報の確認 ----
+# 判定は共有モジュール（hooks/ai-team-config.mjs）に任せる（ガードと同じ判定にするため）。
+# review は健さんに変更を渡す（--uncommitted: ステージ済み・未ステージ・未追跡 / --base: 基準ブランチとの差分と、見込みでは未コミットの変更）。
+# 渡る変更のすべてのパスを集めて、呼ぶ前に秘密情報のパターンと照らす。review でなければ、パスは空（設定ファイルの確かめだけをする）
+$GitPaths = @()
 if ($Mode -eq 'review') {
-	# review は健さんに変更を渡す（--uncommitted: ステージ済み・未ステージ・未追跡 / --base: 基準ブランチとの差分と、見込みでは未コミットの変更）。
-	# 渡る変更のすべてのパスを、呼ぶ前に秘密情報のパターンと照らす
 	# git status の -uall: 未追跡のディレクトリを1行にまとめず、中のファイルまで出す。-z: 空白や日本語のパスを引用符で囲まない
 	Push-Location -LiteralPath $RepoRoot
 	try {
@@ -115,26 +125,74 @@ if ($Mode -eq 'review') {
 	}
 	if ($gitCode -ne 0) { Stop-Wrapper "git status が失敗しました（Git のリポジトリですか？）: $RepoRoot" }
 	if ($diffCode -ne 0) { Stop-Wrapper "git diff が失敗しました（基準ブランチ $Base はありますか？）: $RepoRoot" }
-	$secrets = @()
 	# 各項目は「XY <パス>」。X か Y が R・C（名前を変えた・写した）の項目は、次の項目に元のパスだけが続く
 	$entries = @($status -split [char]0)
 	for ($i = 0; $i -lt $entries.Count; $i++) {
 		$entry = $entries[$i]
 		if ($entry -eq '' -or $entry.Length -lt 4) { continue }
 		$xy = $entry.Substring(0, 2)
-		$path = $entry.Substring(3)
-		if (Test-SecretPath $path) { $secrets += $path }
+		$GitPaths += $entry.Substring(3)
 		if ($xy.Contains('R') -or $xy.Contains('C')) {
 			$i++
-			if ($i -lt $entries.Count -and $entries[$i] -ne '' -and (Test-SecretPath $entries[$i])) { $secrets += $entries[$i] }
+			if ($i -lt $entries.Count -and $entries[$i] -ne '') { $GitPaths += $entries[$i] }
 		}
 	}
 	foreach ($path in ($diffNames -split [char]0)) {
-		if ($path -ne '' -and (Test-SecretPath $path)) { $secrets += $path }
+		if ($path -ne '') { $GitPaths += $path }
 	}
-	if ($secrets.Count -gt 0) {
-		Stop-Wrapper ('健さんに渡る変更に秘密情報のファイルがあるので、review を呼びません（未追跡・ステージ済み・書き換え・名前の変更・基準ブランチとの差分のどれも Codex に送られるため）: ' + (($secrets | Select-Object -Unique) -join ', '))
+}
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+	Stop-Wrapper 'node が PATH にありません。秘密情報と設定ファイル（.claude/ai-team.json）の確かめに使うので、Node.js を入れてから呼んでください。'
+}
+$ConfigModule = Join-Path $PSScriptRoot '..\..\..\hooks\ai-team-config.mjs'
+if (-not (Test-Path -LiteralPath $ConfigModule -PathType Leaf)) {
+	Stop-Wrapper "共有モジュールが見つかりません: $ConfigModule"
+}
+$ConfigModule = (Resolve-Path -LiteralPath $ConfigModule).Path
+
+# 作業の根と、メインのチェックアウト（worktree list の1件目）の根の両方で、設定ファイルを読む
+$CheckRoots = @($RepoRoot)
+$MainRoot = Get-ReplyRoot
+if ($MainRoot -ine $RepoRoot) { $CheckRoots += $MainRoot }
+
+$CheckDir = Join-Path ([System.IO.Path]::GetTempPath()) ('claude\codex-check-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $CheckDir -Force | Out-Null
+$checkCode = 1
+$checkOut = ''
+try {
+	$pathsFile = Join-Path $CheckDir 'paths.bin'
+	$outFile = Join-Path $CheckDir 'out.txt'
+	# NUL 区切りの UTF-8（BOM なし）。標準入出力を通さないのは、Windows PowerShell 5.1 の文字コードで日本語のパスが化けるため
+	[System.IO.File]::WriteAllBytes($pathsFile, $utf8.GetBytes(($GitPaths -join [string][char]0)))
+	$nodeArgs = @($ConfigModule, 'check')
+	foreach ($root in $CheckRoots) { $nodeArgs += @('--root', $root) }
+	$nodeArgs += @('--paths-file', $pathsFile, '--out', $outFile)
+	$previous = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		& node @nodeArgs
+		$checkCode = $LASTEXITCODE
+	} finally {
+		$ErrorActionPreference = $previous
 	}
+	if (Test-Path -LiteralPath $outFile -PathType Leaf) { $checkOut = [System.IO.File]::ReadAllText($outFile, $utf8) }
+} finally {
+	Remove-Item -LiteralPath $CheckDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($checkCode -eq 3) {
+	$secrets = @($checkOut -split "`n" | Where-Object { $_ -ne '' } | Select-Object -Unique)
+	Stop-Wrapper ('健さんに渡る変更に秘密情報のファイルがあるので、review を呼びません（未追跡・ステージ済み・書き換え・名前の変更・基準ブランチとの差分のどれも Codex に送られるため）: ' + ($secrets -join ', '))
+}
+if ($checkCode -eq 2) {
+	Stop-Wrapper ("設定ファイル（.claude/ai-team.json）が壊れているので、健さんを呼びません（黙って既定の一覧に戻ると、足した秘密情報が守られないため）: $checkOut")
+}
+if ($checkCode -ne 0) {
+	Stop-Wrapper "秘密情報と設定ファイルの確かめが失敗しました（node の終了コード $checkCode）。"
+}
+# 終了コード 0 でも、共有モジュールが印を書いていなければ、確かめが済んだか分からない（リンク経由の起動で何もせずに終わった場合など）
+if (($checkOut -split "`n" | Select-Object -First 1).Trim() -ne 'ai-team-config: ok') {
+	Stop-Wrapper '秘密情報と設定ファイルの確かめが済んだか分からないので、健さんを呼びません（共有モジュールが印を返しませんでした）。'
 }
 
 # 一時ディレクトリ（終わったら消す）
@@ -162,30 +220,6 @@ function Invoke-Codex {
 		$log | Select-Object -Last 20 | ForEach-Object { [Console]::Error.WriteLine("  $_") }
 	}
 	return $code
-}
-
-# 返事の保存先の根。worktree から呼ばれても、メインのチェックアウト（worktree list の1件目）にする。
-# 求められなければ（git が失敗・worktree でない）、作業の根のまま。
-function Get-ReplyRoot {
-	$previous = $ErrorActionPreference
-	$ErrorActionPreference = 'Continue'
-	try {
-		$lines = @(& git -C $RepoRoot worktree list --porcelain 2>$null)
-		$code = $LASTEXITCODE
-	} catch {
-		$code = 1
-	} finally {
-		$ErrorActionPreference = $previous
-	}
-	if ($code -ne 0) { return $RepoRoot }
-	foreach ($line in $lines) {
-		if ($line -match '^worktree (.+)$') {
-			$main = $Matches[1].Trim().Replace('/', '\')
-			if (Test-Path -LiteralPath $main -PathType Container) { return (Resolve-Path -LiteralPath $main).Path }
-			return $RepoRoot
-		}
-	}
-	return $RepoRoot
 }
 
 # 保存する名前が、Git に無視されるか（リポジトリの根 $Root で `git check-ignore`。終了コード 0 のときだけ真）。
