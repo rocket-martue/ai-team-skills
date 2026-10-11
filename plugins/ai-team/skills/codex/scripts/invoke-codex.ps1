@@ -6,7 +6,7 @@
 # 実装（ファイルの書き換え）は頼まない。sandbox は常に read-only。
 #
 # 呼び方（リポジトリの根から、Bash ツールで）:
-#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1 -Mode consult -Task <タスク名> -PromptFile <一時ファイル>
+#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" -Mode consult -Task <タスク名> -PromptFile <一時ファイル>
 #
 # 終了コード: 0 = 成功 / 1 = 呼ぶ前の確認で止めた / 2 = image で画像のパスが取れなかった / 4 = make-patch で見せる差分が無い / それ以外 = codex の終了コード
 

@@ -3,7 +3,7 @@
 // 本物の健さん（codex）は呼ばない。依存なし（Node.js の標準モジュールだけ）。
 //
 // 使い方（リポジトリの根から）:
-//   node .claude/skills/codex/scripts/test-invoke-codex.mjs
+//   node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs（プラグインを入れたリポジトリでは、プラグインの skills/codex/scripts/ の下）
 //
 // 終了コード: 0 = すべて通った / 1 = 1つでも落ちた
 
@@ -277,7 +277,7 @@ expectPass('-Base で、基準ブランチの後のコミットが秘密情報�
 	commitAll(git, 'doc');
 }, { base: 'main' });
 
-// ---- 設定ファイル（.claude/ai-team.json・claude/ai-team.json）。判定は共有モジュール（ガードと同じ）に任せている ----
+// ---- 設定ファイル（.claude/ai-team.json・repo-files/claude/ai-team.json）。判定は共有モジュール（ガードと同じ）に任せている ----
 const j = (obj) => JSON.stringify(obj);
 const wrangler = j({ secretPatterns: ['**/.wrangler/**'] });
 
@@ -322,14 +322,14 @@ expectStop('設定: 既定の秘密情報は、設定ファイルがあっても
 	write('.dev.vars', 'S=1\n');
 });
 
-expectPass('設定: claude/ai-team.json だけのリポジトリ（テンプレートのリポジトリ）で、当たらなければ通る', ({ git, write }) => {
-	write('claude/ai-team.json', wrangler);
+expectPass('設定: repo-files/claude/ai-team.json だけのリポジトリ（テンプレートのリポジトリ）で、当たらなければ通る', ({ git, write }) => {
+	write('repo-files/claude/ai-team.json', wrangler);
 	commitAll(git, 'init');
 	write('src/a.txt', 'a\n');
 });
 
-expectStop('設定: .claude/ が無く claude/ai-team.json だけのリポジトリ（テンプレートのリポジトリ）', ({ git, write }) => {
-	write('claude/ai-team.json', wrangler);
+expectStop('設定: .claude/ が無く repo-files/claude/ai-team.json だけのリポジトリ（テンプレートのリポジトリ）', ({ git, write }) => {
+	write('repo-files/claude/ai-team.json', wrangler);
 	commitAll(git, 'init');
 	write('.wrangler/state.json', 's\n');
 });
@@ -431,7 +431,7 @@ function worktreeCase(name, configRel) {
 	}
 }
 worktreeCase('設定: worktree の根に設定が無く、メインのチェックアウトの .claude/ai-team.json に .wrangler/ がある', '.claude/ai-team.json');
-worktreeCase('設定: worktree の根にもメインの .claude/ にも設定が無く、メインの claude/ai-team.json に .wrangler/ がある', 'claude/ai-team.json');
+worktreeCase('設定: worktree の根にもメインの .claude/ にも設定が無く、メインの repo-files/claude/ai-team.json に .wrangler/ がある', 'repo-files/claude/ai-team.json');
 
 // 共有モジュールの置き方の確かめ：ラッパーのコピーの 3 つ上に hooks/ を置く（skills/codex/scripts/ の形）
 function makeWrapperTree(hooksKind) {

@@ -11,8 +11,9 @@ model: fable
 
 ## 最初に必ず読むこと
 
-- `docs/team/common-rules.md`（共通規約）
-- `docs/team/workflow.md`（作業の流れ。言葉の決まり）
+- `${CLAUDE_PLUGIN_ROOT}/docs/team-rules.md`（チーム共通の決まり）
+- `docs/team/common-rules.md`（このリポジトリの固有の決まり）
+- `${CLAUDE_PLUGIN_ROOT}/docs/workflow.md`（作業の流れ。言葉の決まり）
 - ガネーシャから渡された plan.md。ただし「承認前の確認」の節は読まない（ガネーシャの採否の判断が入っているため）。Read で全文を開いて目に入っても、その節の中身は判断に使わない
 
 どれかが読めなければ、作業を始めずに、読めなかったファイルを報告して終わる。

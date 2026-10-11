@@ -2,10 +2,10 @@
 
 - 作成：ガネーシャ（YYYY-MM-DD）
 - 承認：[ ] まーちゅう（承認日：　　　　。承認の言葉：　　　　）
-<!-- 承認欄の埋め方は docs/team/workflow.md の「承認欄」 -->
+<!-- 承認欄の埋め方は作業の流れ（プラグイン ai-team の docs/workflow.md）の「承認欄」 -->
 - ブランチ：`<ブランチ名>`（リポジトリの慣習に合わせて書く。型は決めない）
 - メジェドのモデル：haiku（既定）／sonnet <!-- 選び方は plan-writer の「書き方の基準」を見る -->
-- レビューの道：承認前は Fable・健さん ／ PR の前は 健さん <!-- 選び方は docs/team/workflow.md の言葉の決まり「レビューの道」。`/code-review` を選んだ段はレベルも書く（例：`/code-review（medium）`） -->
+- レビューの道：承認前は Fable・健さん ／ PR の前は 健さん <!-- 選び方は作業の流れ（プラグイン ai-team の docs/workflow.md）の言葉の決まり「レビューの道」。`/code-review` を選んだ段はレベルも書く（例：`/code-review（medium）`） -->
 - 改訂履歴：
   - YYYY-MM-DD 初版
 

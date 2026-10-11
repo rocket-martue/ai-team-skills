@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // guard-code-edit.mjs の確かめ。フックに入力の JSON を流して、終了コードと標準出力を見る。
-// 使い方：node .claude/hooks/test-guard-code-edit.mjs（このリポジトリのテンプレートでは node claude/hooks/test-guard-code-edit.mjs）
+// 使い方：リポジトリの根から node plugins/ai-team/hooks/test-guard-code-edit.mjs（テンプレートのリポジトリでだけ打つ。repo-files/claude/settings.json を読むため）
 // 期待は 0（通す。標準出力は空）・2（止める）・'ask'（終了コード0で、標準出力の JSON が確認を求める）。
 // git は呼ばない。依存なし。
 
@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const hook = path.join(here, 'guard-code-edit.mjs');
-const settingsPath = path.join(here, '..', 'settings.json');
+const settingsPath = path.join(here, '..', '..', '..', 'repo-files', 'claude', 'settings.json');
+const hooksJsonPath = path.join(here, 'hooks.json');
 
 // 仮のリポジトリ。一時ディレクトリの claude/ の下は scratchpad として通るので、避けた名前にする。
 const sandbox = mkdtempSync(path.join(tmpdir(), 'guard-test-'));
@@ -94,6 +95,14 @@ try {
 	run('main: scratchpad は通る', { file: path.join(tmpdir(), 'claude', 'a.txt') }, 0);
 	run('main: ~/.claude/settings.json は止まる', { file: path.join(homedir(), '.claude', 'settings.json') }, 2);
 	runRaw('JSON でない入力は止まる', 'not json', 2);
+
+	// ---- プラグインのエージェント名（ai-team:mejed） ----
+	const PLUGIN_MEJED = { agent: 'ai-team:mejed' };
+	run('ai-team:mejed: コードは通る', { file: p('src', 'a.js'), ...PLUGIN_MEJED }, 0);
+	run('ai-team:mejed: plan.md は止まる', { file: p('docs', 'tasks', 't', 'plan.md'), ...PLUGIN_MEJED }, 2);
+	run('ai-team:mejed: .dev.vars は止まる', { file: p('.dev.vars'), ...PLUGIN_MEJED }, 2);
+	run('ai-team:adversary: コードは止まる', { file: p('src', 'a.js'), agent: 'ai-team:adversary' }, 2);
+	run('other:mejed: コードは止まる', { file: p('src', 'a.js'), agent: 'other:mejed' }, 2);
 
 	// ---- worktree の中 ----
 	run('wt mejed: コードは通る', { file: p(WT, 'src', 'a.php'), ...MEJED }, 0);
@@ -448,13 +457,26 @@ try {
 		check('check --resolve-real: 付けても、直接 .kv/ のパスは止まる', runCheck(['.kv/a.md'], true) === 3);
 	}
 
-	// フックの登録は、シェルを通さない書き方
-	const registered = (settings.hooks?.PreToolUse || []).flatMap((entry) => entry.hooks || []);
-	const guard = registered.find((h) => (h.args || []).some((a) => a.includes('guard-code-edit.mjs')));
-	check(
-		'settings.json のフックが command と args の形で、${CLAUDE_PROJECT_DIR} を使っている',
-		Boolean(guard) && guard.command === 'node' && guard.args[0].startsWith('${CLAUDE_PROJECT_DIR}/')
+	// フックの登録（プラグインの hooks/hooks.json）は、シェルを通さない書き方
+	const pluginHooks = JSON.parse(readFileSync(hooksJsonPath, 'utf8')).hooks || {};
+	const preEntries = pluginHooks.PreToolUse || [];
+	const guardEntry = preEntries.find((entry) =>
+		(entry.hooks || []).some((h) => (h.args || []).some((a) => a.includes('guard-code-edit.mjs')))
 	);
+	const guard = guardEntry && guardEntry.hooks.find((h) => (h.args || []).some((a) => a.includes('guard-code-edit.mjs')));
+	check(
+		'hooks.json の PreToolUse が Edit|Write|MultiEdit|NotebookEdit に、ガードを command と args の形（${CLAUDE_PLUGIN_ROOT}）で登録している',
+		Boolean(guard) &&
+			guardEntry.matcher === 'Edit|Write|MultiEdit|NotebookEdit' &&
+			guard.command === 'node' &&
+			guard.args[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs'
+	);
+	const sessionHooks = (pluginHooks.SessionStart || []).flatMap((entry) => entry.hooks || []);
+	check(
+		'hooks.json の SessionStart に session-start.mjs が登録されている',
+		sessionHooks.some((h) => h.command === 'node' && (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs')
+	);
+	check('settings.json に hooks が無い（ガードのフックはプラグインに移った）', settings.hooks === undefined);
 } finally {
 	rmSync(sandbox, { recursive: true, force: true });
 }
