@@ -638,4 +638,114 @@ try {
 	report('保存: worktree から呼ぶと、無視されているかはメインのチェックアウトで判定する', false, String(e.message));
 }
 
+// ---- save-code-review（/code-review の結果を保存するだけ。codex は呼ばない）----
+const saveBody = '2026-10-12 /code-review high plan.md\n{"findings": []}\n日本語の中身\n';
+const saveInput = path.join(root, 'save-input.md');
+fs.writeFileSync(saveInput, saveBody);
+const emptyInput = path.join(root, 'save-empty.md');
+fs.writeFileSync(emptyInput, '  \n');
+
+function saveArgs(repo, { stage = 'plan', input = saveInput } = {}) {
+	const args = ['-Mode', 'save-code-review', '-Task', 't', '-WorkingDirectory', repo];
+	if (stage !== null) args.push('-Stage', stage);
+	if (input !== null) args.push('-InputFile', input);
+	return args;
+}
+// codex も node も PATH に無い環境（git と PowerShell だけ）
+function envWithoutCodexAndNode(env) {
+	const e = { ...env };
+	e.PATH = [gitDir, path.join(sysRoot, 'System32'), psDir].join(';');
+	return e;
+}
+
+// S1. 無視されるリポジトリ：docs/tasks/t/code-review/01-plan.md に中身をそのまま保存し、SAVED は相対パス。2回目は 02-plan.md。codex は呼ばれない
+try {
+	const ctx = makeRepo();
+	ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
+	commitAll(ctx.git, 'ignore');
+	const before = gitStatus(ctx.repo);
+	const r1 = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
+	const s1 = savedPath(r1.stdout);
+	const body1 = fs.existsSync(path.join(ctx.repo, 'docs', 'tasks', 't', 'code-review', '01-plan.md'))
+		? fs.readFileSync(path.join(ctx.repo, 'docs', 'tasks', 't', 'code-review', '01-plan.md'), 'utf8') : null;
+	const ok1 = r1.code === 0 && s1 === 'docs/tasks/t/code-review/01-plan.md' && body1 === saveBody && !fs.existsSync(ctx.mark) && gitStatus(ctx.repo) === before;
+	report('save-code-review: 無視されるリポジトリは docs/tasks/t/code-review/01-plan.md に中身のまま保存し、SAVED は相対パス。codex は呼ばれない', ok1, `(code=${r1.code} saved=${s1} stderr=${r1.stderr.trim().slice(0, 200)})`);
+	const r2 = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
+	const s2 = savedPath(r2.stdout);
+	report('save-code-review: 2回目は 02-plan.md になる', r2.code === 0 && s2 === 'docs/tasks/t/code-review/02-plan.md', `(code=${r2.code} saved=${s2} stderr=${r2.stderr.trim().slice(0, 200)})`);
+} catch (e) {
+	report('save-code-review: 無視されるリポジトリは docs/tasks/t/code-review/01-plan.md に中身のまま保存し、SAVED は相対パス。codex は呼ばれない', false, String(e.message));
+	report('save-code-review: 2回目は 02-plan.md になる', false, String(e.message));
+}
+
+// S2. 無視されないリポジトリ：<一時ディレクトリ>/code-review-replies/…/t/01-plan.md に保存し、リポジトリに何も作らない
+try {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	const before = gitStatus(ctx.repo);
+	const r = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
+	const s = savedPath(r.stdout);
+	const ok = r.code === 0
+		&& isUnderTemp(s)
+		&& s.includes(`${path.sep}code-review-replies${path.sep}`)
+		&& path.basename(path.dirname(s)) === 't'
+		&& path.basename(s) === '01-plan.md'
+		&& fs.readFileSync(s, 'utf8') === saveBody
+		&& !fs.existsSync(path.join(ctx.repo, 'docs'))
+		&& !fs.existsSync(ctx.mark)
+		&& gitStatus(ctx.repo) === before;
+	report('save-code-review: 無視されないリポジトリは code-review-replies の下に保存し、リポジトリに何も作らない', ok, `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
+} catch (e) {
+	report('save-code-review: 無視されないリポジトリは code-review-replies の下に保存し、リポジトリに何も作らない', false, String(e.message));
+}
+
+// S3. codex も node も PATH に無くても保存できる
+try {
+	const ctx = makeRepo();
+	ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
+	commitAll(ctx.git, 'ignore');
+	const env = envWithoutCodexAndNode(ctx.env);
+	const probe = spawnSync(psExe, ['-NoProfile', '-Command', 'if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Get-Command node -ErrorAction SilentlyContinue)) { exit 1 } else { exit 0 }'], { env, encoding: 'utf8' });
+	if (probe.status !== 0) throw new Error('子のプロセスの PATH から codex・node を外せていません');
+	const r = runRaw(saveArgs(ctx.repo), ctx.repo, env);
+	const s = savedPath(r.stdout);
+	report('save-code-review: codex も node も PATH に無くても保存できる', r.code === 0 && s === 'docs/tasks/t/code-review/01-plan.md', `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
+} catch (e) {
+	report('save-code-review: codex も node も PATH に無くても保存できる', false, String(e.message));
+}
+
+// S4. 設定ファイル（.claude/ai-team.json）が壊れていても保存できる
+try {
+	const ctx = makeRepo();
+	ctx.write('.claude/ai-team.json', '{ not json');
+	ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
+	commitAll(ctx.git, 'init');
+	const r = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
+	const s = savedPath(r.stdout);
+	report('save-code-review: 設定ファイルが壊れていても保存できる', r.code === 0 && s === 'docs/tasks/t/code-review/01-plan.md', `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
+} catch (e) {
+	report('save-code-review: 設定ファイルが壊れていても保存できる', false, String(e.message));
+}
+
+// S5. 止まる：-Stage が無い・plan でない、-InputFile が無い・空（終了コード 1。何も保存しない）
+for (const [label, opts] of [
+	['-Stage が無い', { stage: null }],
+	['-Stage が plan でない', { stage: 'pr' }],
+	['-InputFile が無い', { input: null }],
+	['-InputFile のファイルが見つからない', { input: path.join(root, 'no-such-input.md') }],
+	['-InputFile が空', { input: emptyInput }],
+]) {
+	const name = `save-code-review: 止まる（${label}）`;
+	try {
+		const ctx = makeRepo();
+		ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
+		commitAll(ctx.git, 'ignore');
+		const r = runRaw(saveArgs(ctx.repo, opts), ctx.repo, ctx.env);
+		const ok = r.code === 1 && !fs.existsSync(path.join(ctx.repo, 'docs')) && savedPath(r.stdout) === null;
+		report(name, ok, `(code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+
 finish();

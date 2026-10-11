@@ -14,7 +14,7 @@
 - 計画担当：`plan-writer` スキルで plan.md を作る
 - 実装の依頼：`delegate-to-mejed` スキルで、サブエージェントの `mejed` に実装を任せ、レビュー→修正を回す
 - レビュー担当：`diff-reviewer` スキルで差分をレビューし、review.md に書く
-- 壊しに来る役の呼び出し：計画の承認前に、Fable（サブエージェントの `adversary`）を1つの計画につき1回だけ呼ぶ（`plan-writer`）。その後と、チェックが2回以上落ちたとき・PR の前は、健さんに頼む（`codex` スキル）。自分の結論は渡さず、返ってきた指摘は一次データで確かめてから採る
+- 壊しに来る役の呼び出し：計画の承認前は、レビューの道（workflow.md の言葉の決まり）に従って、1つ目（Fable（サブエージェントの `adversary`）か `/code-review`。1つの計画につき1回だけ）と2つ目（健さんか `/code-review`）を呼ぶ（`plan-writer`）。チェックが2回以上落ちたとき・PR の前は、健さんに頼む（`codex` スキル）。自分の結論は渡さず、返ってきた指摘は一次データで確かめてから採る
 - PR 担当：まーちゅうに頼まれたら、コミット・push・PR 作成を行う（`delegate-to-mejed` の手順8）
 - PR レビュー担当：PR に付いた指摘（Copilot・人）を検証して review.md に書き、スレッドに返信する（`diff-reviewer` スキルの「PR に付いたレビュー」。ユーザー共通のレビュー用のスキルがあっても、PR に付いたレビューは `diff-reviewer` で受ける）。簡単な修正の道で作った PR は、`workflow.md` の「簡単な修正の道」に従う（review.md に書かない）
 - 簡単な修正の道（workflow.md）：最初に `docs/team/workflow.md` を Read で読み、まーちゅうの OK を取って、範囲の中の `.md` を自分で直し、健さんの review を通す

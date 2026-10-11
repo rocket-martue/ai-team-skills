@@ -1,6 +1,7 @@
 ﻿# invoke-codex.ps1
 # Claude Code（ガネーシャ・メジェド）から Codex CLI（健さん）を呼ぶラッパー。
 # モードは consult（読むだけの相談）・review（読むだけのレビュー）・image（画像の生成）の3つだけ。
+# と、/code-review の結果を保存するだけの save-code-review（codex は呼ばない）。
 # 実装（ファイルの書き換え）は頼まない。sandbox は常に read-only。
 #
 # 呼び方（リポジトリの根から、Bash ツールで）:
@@ -11,7 +12,7 @@
 [CmdletBinding()]
 param(
 	[Parameter(Mandatory = $true)]
-	[ValidateSet('consult', 'review', 'image')]
+	[ValidateSet('consult', 'review', 'image', 'save-code-review')]
 	[string] $Mode,
 
 	# 返事を docs/tasks/<Task>/codex/ に保存するためのタスク名（必須）
@@ -27,7 +28,13 @@ param(
 	[string] $Image = '',
 
 	# review でコミット済みの差分を見るときの基準ブランチ（無ければ未コミットの変更を見る）
-	[string] $Base = ''
+	[string] $Base = '',
+
+	# save-code-review で必須。/code-review の結果を保存する段（plan だけ）
+	[string] $Stage = '',
+
+	# save-code-review で必須。保存する中身のファイル（UTF-8）
+	[string] $InputFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +60,7 @@ if ($Task -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
 	Stop-Wrapper "-Task は英数字で始め、英数字と . _ - だけを使ってください: $Task"
 }
 
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+if ($Mode -ne 'save-code-review' -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
 	Stop-Wrapper 'codex が PATH にありません。npm install -g @openai/codex で入れて、codex login を打ってから呼んでください。'
 }
 
@@ -86,6 +93,109 @@ function Get-ReplyRoot {
 		}
 	}
 	return $RepoRoot
+}
+# 保存する名前が、Git に無視されるか（リポジトリの根 $Root で `git check-ignore`。終了コード 0 のときだけ真）。
+# git が失敗したとき（Git のリポジトリでない・128）は偽にして、一時ディレクトリに保存する
+function Test-ReplyIgnored {
+	param([string] $Root, [string] $RelPath)
+	$previous = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		& git -C $Root check-ignore -q -- $RelPath 2>$null
+		$code = $LASTEXITCODE
+	} catch {
+		$code = 1
+	} finally {
+		$ErrorActionPreference = $previous
+	}
+	return ($code -eq 0)
+}
+
+# 返事の保存先（Git に無視されていないときに使う、OS の一時ディレクトリの下のフォルダ）。
+# 根の識別子は「根の最後のフォルダの名前 + - + 根のパスの SHA-256 の先頭8文字」
+# （同じ名前で親の違うリポジトリが混ざらないため。小文字にそろえるのは、C: と c: の違いで別の場所にしないため）
+function Get-TempReplyDir {
+	param([string] $ReplyRoot, [string] $TempRootName = 'codex-replies')
+	$key = $ReplyRoot.ToLowerInvariant().Replace('\', '/')
+	$sha = [System.Security.Cryptography.SHA256]::Create()
+	try {
+		$hash = $sha.ComputeHash($utf8.GetBytes($key))
+	} finally {
+		$sha.Dispose()
+	}
+	$hex = -join ($hash | ForEach-Object { $_.ToString('x2') })
+	$id = (Split-Path -Leaf $ReplyRoot) + '-' + $hex.Substring(0, 8)
+	return (Join-Path ([System.IO.Path]::GetTempPath()) (Join-Path $TempRootName (Join-Path $id $Task)))
+}
+
+# 保存先のフォルダにある返事の一番大きい連番（フォルダが無ければ 0）
+function Get-MaxReplyNumber {
+	param([string] $Dir)
+	$max = 0
+	if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return 0 }
+	foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter '*.md' -File)) {
+		if ($f.Name -match '^(\d+)-') { $n = [int]$Matches[1]; if ($n -gt $max) { $max = $n } }
+	}
+	return $max
+}
+
+# 返事を保存して、保存先を返す（リポジトリの中なら相対パス、一時ディレクトリなら絶対パス）
+function Save-Reply {
+	# SubDir：docs/tasks/<Task>/ の下の保存先の名前。Suffix：ファイル名の末尾（<連番>-<Suffix>.md）。TempRootName：一時ディレクトリ側の根のフォルダの名前
+	param([string] $Text, [string] $SubDir = 'codex', [string] $Suffix = $Mode, [string] $TempRootName = 'codex-replies')
+	$replyRoot = Get-ReplyRoot
+	$repoRel = "docs/tasks/$Task/$SubDir"
+	$dir = Join-Path $replyRoot ("docs\tasks\$Task\$SubDir")
+	$switched = $false
+	$bytes = $utf8.GetBytes($Text)
+	# 連番は「今ある一番大きい番号 + 1」。同じ名前があれば上書きせず次の番号にする（欠番や同時の呼び出しで消さないため）
+	$base = Get-MaxReplyNumber $dir
+	for ($n = $base + 1; $n -le ($base + 100); $n++) {
+		$name = '{0:D2}-{1}.md' -f $n, $Suffix
+		if (-not $switched) {
+			# 無視されているかは、実際に保存する名前で確かめる（仮の名前では、除外の除外（!の行）を見落とすため）
+			if (-not (Test-ReplyIgnored $replyRoot "$repoRel/$name")) {
+				# 無視されていなければ、リポジトリには何も作らず、一時ディレクトリに続きの連番で保存する
+				$switched = $true
+				$dir = Get-TempReplyDir $replyRoot $TempRootName
+				$base = Get-MaxReplyNumber $dir
+				$n = $base
+				[Console]::Error.WriteLine("invoke-codex: $replyRoot では docs/tasks/*/$SubDir/ が Git に無視されていないので、返事を一時ディレクトリに保存しました（リポジトリに未追跡のファイルを残さないため）")
+				continue
+			}
+		}
+		New-Item -ItemType Directory -Path $dir -Force | Out-Null
+		try {
+			$stream = [System.IO.File]::Open((Join-Path $dir $name), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+		} catch [System.IO.IOException] {
+			continue
+		}
+		try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+		if ($switched) { return (Join-Path $dir $name) }
+		return "$repoRel/$name"
+	}
+	Stop-Wrapper "返事の保存先の名前が決められませんでした: $dir"
+}
+
+
+# ---- save-code-review：/code-review の結果を保存するだけ（codex は呼ばない） ----
+# codex・node・共有モジュールが無くても止まらない。秘密情報と設定ファイルの確かめもしない（codex に何も渡さないため）。
+# 保存先の決め方は Save-Reply（consult・review・image と同じ）。名前だけ docs/tasks/<Task>/code-review/<連番>-<Stage>.md と
+# <一時ディレクトリ>/code-review-replies/… にする
+if ($Mode -eq 'save-code-review') {
+	if ($Stage -ne 'plan') {
+		Stop-Wrapper "-Stage は plan だけです（PR の前と K2 は別のイシューで決めます）: $Stage"
+	}
+	if ([string]::IsNullOrWhiteSpace($InputFile) -or -not (Test-Path -LiteralPath $InputFile -PathType Leaf)) {
+		Stop-Wrapper "保存する中身のファイル（-InputFile）が見つかりません: $InputFile"
+	}
+	$content = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $InputFile).Path, $utf8)
+	if ([string]::IsNullOrWhiteSpace($content)) {
+		Stop-Wrapper '保存する中身（-InputFile）が空です。'
+	}
+	$savedPath = Save-Reply $content 'code-review' $Stage 'code-review-replies'
+	Write-Output "SAVED: $savedPath"
+	exit 0
 }
 
 $Prompt = ''
@@ -220,88 +330,6 @@ function Invoke-Codex {
 		$log | Select-Object -Last 20 | ForEach-Object { [Console]::Error.WriteLine("  $_") }
 	}
 	return $code
-}
-
-# 保存する名前が、Git に無視されるか（リポジトリの根 $Root で `git check-ignore`。終了コード 0 のときだけ真）。
-# git が失敗したとき（Git のリポジトリでない・128）は偽にして、一時ディレクトリに保存する
-function Test-ReplyIgnored {
-	param([string] $Root, [string] $RelPath)
-	$previous = $ErrorActionPreference
-	$ErrorActionPreference = 'Continue'
-	try {
-		& git -C $Root check-ignore -q -- $RelPath 2>$null
-		$code = $LASTEXITCODE
-	} catch {
-		$code = 1
-	} finally {
-		$ErrorActionPreference = $previous
-	}
-	return ($code -eq 0)
-}
-
-# 返事の保存先（Git に無視されていないときに使う、OS の一時ディレクトリの下のフォルダ）。
-# 根の識別子は「根の最後のフォルダの名前 + - + 根のパスの SHA-256 の先頭8文字」
-# （同じ名前で親の違うリポジトリが混ざらないため。小文字にそろえるのは、C: と c: の違いで別の場所にしないため）
-function Get-TempReplyDir {
-	param([string] $ReplyRoot)
-	$key = $ReplyRoot.ToLowerInvariant().Replace('\', '/')
-	$sha = [System.Security.Cryptography.SHA256]::Create()
-	try {
-		$hash = $sha.ComputeHash($utf8.GetBytes($key))
-	} finally {
-		$sha.Dispose()
-	}
-	$hex = -join ($hash | ForEach-Object { $_.ToString('x2') })
-	$id = (Split-Path -Leaf $ReplyRoot) + '-' + $hex.Substring(0, 8)
-	return (Join-Path ([System.IO.Path]::GetTempPath()) (Join-Path 'codex-replies' (Join-Path $id $Task)))
-}
-
-# 保存先のフォルダにある返事の一番大きい連番（フォルダが無ければ 0）
-function Get-MaxReplyNumber {
-	param([string] $Dir)
-	$max = 0
-	if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return 0 }
-	foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter '*.md' -File)) {
-		if ($f.Name -match '^(\d+)-') { $n = [int]$Matches[1]; if ($n -gt $max) { $max = $n } }
-	}
-	return $max
-}
-
-# 返事を保存して、保存先を返す（リポジトリの中なら相対パス、一時ディレクトリなら絶対パス）
-function Save-Reply {
-	param([string] $Text)
-	$replyRoot = Get-ReplyRoot
-	$repoRel = "docs/tasks/$Task/codex"
-	$dir = Join-Path $replyRoot ("docs\tasks\$Task\codex")
-	$switched = $false
-	$bytes = $utf8.GetBytes($Text)
-	# 連番は「今ある一番大きい番号 + 1」。同じ名前があれば上書きせず次の番号にする（欠番や同時の呼び出しで消さないため）
-	$base = Get-MaxReplyNumber $dir
-	for ($n = $base + 1; $n -le ($base + 100); $n++) {
-		$name = '{0:D2}-{1}.md' -f $n, $Mode
-		if (-not $switched) {
-			# 無視されているかは、実際に保存する名前で確かめる（仮の名前では、除外の除外（!の行）を見落とすため）
-			if (-not (Test-ReplyIgnored $replyRoot "$repoRel/$name")) {
-				# 無視されていなければ、リポジトリには何も作らず、一時ディレクトリに続きの連番で保存する
-				$switched = $true
-				$dir = Get-TempReplyDir $replyRoot
-				$base = Get-MaxReplyNumber $dir
-				$n = $base
-				[Console]::Error.WriteLine("invoke-codex: $replyRoot では docs/tasks/*/codex/ が Git に無視されていないので、返事を一時ディレクトリに保存しました（リポジトリに未追跡のファイルを残さないため）")
-				continue
-			}
-		}
-		New-Item -ItemType Directory -Path $dir -Force | Out-Null
-		try {
-			$stream = [System.IO.File]::Open((Join-Path $dir $name), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
-		} catch [System.IO.IOException] {
-			continue
-		}
-		try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
-		if ($switched) { return (Join-Path $dir $name) }
-		return "$repoRel/$name"
-	}
-	Stop-Wrapper "返事の保存先の名前が決められませんでした: $dir"
 }
 
 $exitCode = 0
