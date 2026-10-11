@@ -86,7 +86,7 @@ function buildEnv(mark) {
 		if (/^(PATH|PATHEXT)$/i.test(k)) continue;
 		env[k] = v;
 	}
-	env.PATH = [fakeDir, gitDir, path.join(sysRoot, 'System32'), psDir].join(';');
+	env.PATH = [fakeDir, gitDir, path.dirname(process.execPath), path.join(sysRoot, 'System32'), psDir].join(';');
 	env.PATHEXT = '.COM;.EXE;.BAT;.CMD;.PS1';
 	// 利用者の diff.renames の設定に左右されないよう、環境変数で固定する
 	env.GIT_CONFIG_COUNT = '2';
@@ -141,10 +141,16 @@ function commitAll(git, msg) {
 	git('commit', '-q', '-m', msg);
 }
 
-function runWrapper(ctx, base) {
-	const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'review', '-Task', 't', '-WorkingDirectory', ctx.repo];
+// consult の頼みの文
+const promptFile = path.join(root, 'prompt-consult.md');
+fs.writeFileSync(promptFile, '相談です\n');
+
+// workDir：作業の根（省略時は ctx.repo）。worktree から呼ぶときに指す
+function runWrapper(ctx, base, mode = 'review', workDir = ctx.repo, wrapperPath = wrapper) {
+	const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath, '-Mode', mode, '-Task', 't', '-WorkingDirectory', workDir];
+	if (mode === 'consult') args.push('-PromptFile', promptFile);
 	if (base) args.push('-Base', base);
-	const r = spawnSync(psExe, args, { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+	const r = spawnSync(psExe, args, { cwd: workDir, env: ctx.env, encoding: 'utf8' });
 	return { code: r.status, stderr: r.stderr || '', stdout: r.stdout || '', called: fs.existsSync(ctx.mark) };
 }
 
@@ -161,11 +167,11 @@ function runWrapper(ctx, base) {
 }
 
 // 止まる：偽物の印が無く、ラッパーが期待の言葉で止まる
-function expectStop(name, setup, { base = '', word = '秘密情報' } = {}) {
+function expectStop(name, setup, { base = '', word = '秘密情報', mode = 'review' } = {}) {
 	try {
 		const ctx = makeRepo();
 		setup(ctx);
-		const r = runWrapper(ctx, base);
+		const r = runWrapper(ctx, base, mode);
 		const ok = !r.called && r.code !== 0 && r.stderr.includes(word);
 		report(`止まる: ${name}`, ok, `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
 	} catch (e) {
@@ -174,11 +180,11 @@ function expectStop(name, setup, { base = '', word = '秘密情報' } = {}) {
 }
 
 // 止まらない：偽物の印がある（健さんを呼ぶところまで進んだ）
-function expectPass(name, setup, { base = '' } = {}) {
+function expectPass(name, setup, { base = '', mode = 'review' } = {}) {
 	try {
 		const ctx = makeRepo();
 		setup(ctx);
-		const r = runWrapper(ctx, base);
+		const r = runWrapper(ctx, base, mode);
 		report(`止まらない: ${name}`, r.called, `(code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
 	} catch (e) {
 		report(`止まらない: ${name}`, false, String(e.message));
@@ -270,6 +276,208 @@ expectPass('-Base で、基準ブランチの後のコミットが秘密情報�
 	write('docs/説明 書.md', 'doc\n');
 	commitAll(git, 'doc');
 }, { base: 'main' });
+
+// ---- 設定ファイル（.claude/ai-team.json・claude/ai-team.json）。判定は共有モジュール（ガードと同じ）に任せている ----
+const j = (obj) => JSON.stringify(obj);
+const wrangler = j({ secretPatterns: ['**/.wrangler/**'] });
+
+expectStop('設定: .wrangler/ の未追跡のファイル', ({ git, write }) => {
+	write('.claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('.wrangler/state.json', 's\n');
+});
+
+expectStop('設定: sub/.wrangler/x の未追跡のファイル', ({ git, write }) => {
+	write('.claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('sub/.wrangler/x', 's\n');
+});
+
+expectStop('設定: 日本語のパス（.wrangler/日本語.json）は止まり、止まった文に化けずに出る', ({ git, write }) => {
+	write('.claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('.wrangler/日本語.json', 's\n');
+}, { word: '.wrangler/日本語.json' });
+
+expectStop('設定: U+2028 を含むパス（.wrangler/state<U+2028>.json）も止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('.wrangler/state .json', 's\n');
+});
+
+expectPass('設定: .wrangler/ に当たる変更が無い（wrangler.toml だけ）', ({ git, write }) => {
+	write('.claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('wrangler.toml', 'name = "x"\n');
+});
+
+expectPass('設定: 設定ファイルが無ければ今までどおり（.wrangler/ は秘密情報ではない）', ({ git, write }) => {
+	commitAll(git, 'init');
+	write('.wrangler/state.json', 's\n');
+});
+
+expectStop('設定: 既定の秘密情報は、設定ファイルがあっても止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('.dev.vars', 'S=1\n');
+});
+
+expectPass('設定: claude/ai-team.json だけのリポジトリ（テンプレートのリポジトリ）で、当たらなければ通る', ({ git, write }) => {
+	write('claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('src/a.txt', 'a\n');
+});
+
+expectStop('設定: .claude/ が無く claude/ai-team.json だけのリポジトリ（テンプレートのリポジトリ）', ({ git, write }) => {
+	write('claude/ai-team.json', wrangler);
+	commitAll(git, 'init');
+	write('.wrangler/state.json', 's\n');
+});
+
+// 壊れている設定：consult も止まる（健さんを呼ばない）
+const brokenWord = '壊れている';
+expectStop('設定が JSON として壊れている: consult も止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', '{ not json');
+	commitAll(git, 'init');
+}, { mode: 'consult', word: brokenWord });
+
+expectStop('設定が JSON として壊れている: review も止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', '{ not json');
+	commitAll(git, 'init');
+}, { word: brokenWord });
+
+// 設定ファイルの中身（秘密情報かもしれない）を、止めた文に出さない
+for (const [label, body] of [['JSON でない中身', 'API_KEY=abc123secret'], ['知らないキーの名前', '{"abc123secret": []}']]) {
+	const name = `止まる: 設定の中身（${label}）が止めた文に出ない`;
+	try {
+		const ctx = makeRepo();
+		ctx.write('.claude/ai-team.json', body);
+		commitAll(ctx.git, 'init');
+		const r = runWrapper(ctx, '', 'consult');
+		const out = `${r.stdout}${r.stderr}`;
+		const ok = !r.called && r.code !== 0 && out.includes(brokenWord) && !out.includes('abc123secret');
+		report(name, ok, `(called=${r.called} code=${r.code} out=${out.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+
+expectStop('設定に知らないキー（SecretPatterns）がある: 止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ SecretPatterns: [] }));
+	commitAll(git, 'init');
+}, { mode: 'consult', word: brokenWord });
+
+expectStop('設定の plannerWritable が [1]: 止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ plannerWritable: [1] }));
+	commitAll(git, 'init');
+}, { mode: 'consult', word: brokenWord });
+
+expectStop('設定のグロブが壊れている（{a,b}）: 止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ secretPatterns: ['{a,b}'] }));
+	commitAll(git, 'init');
+}, { mode: 'consult', word: brokenWord });
+
+expectStop('設定が UTF-16LE（BOM 付き）: 止まる', (ctx) => {
+	fs.mkdirSync(path.join(ctx.repo, '.claude'), { recursive: true });
+	fs.writeFileSync(path.join(ctx.repo, '.claude', 'ai-team.json'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(wrangler, 'utf16le')]));
+	commitAll(ctx.git, 'init');
+}, { mode: 'consult', word: brokenWord });
+
+expectPass('設定が UTF-8 の BOM 付きで中身が正しい: 読める（consult が通る）', (ctx) => {
+	fs.mkdirSync(path.join(ctx.repo, '.claude'), { recursive: true });
+	fs.writeFileSync(path.join(ctx.repo, '.claude', 'ai-team.json'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(wrangler, 'utf8')]));
+	commitAll(ctx.git, 'init');
+}, { mode: 'consult' });
+
+// 設定がリンク切れ（シンボリックリンクを作れない環境では飛ばす）
+try {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	fs.mkdirSync(path.join(ctx.repo, '.claude'), { recursive: true });
+	let linked = true;
+	try {
+		fs.symlinkSync(path.join(ctx.repo, 'no-such-target.json'), path.join(ctx.repo, '.claude', 'ai-team.json'), 'file');
+	} catch {
+		linked = false;
+	}
+	if (linked) {
+		const r = runWrapper(ctx, '', 'consult');
+		report('設定がリンク切れ: consult も止まる', !r.called && r.code !== 0 && r.stderr.includes('壊れている'), `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} else {
+		console.log('skip 設定がリンク切れの確かめ（シンボリックリンクを作れない環境）');
+	}
+} catch (e) {
+	report('設定がリンク切れ: consult も止まる', false, String(e.message));
+}
+
+// worktree から呼ぶ：worktree の根に設定が無くても、メインのチェックアウトの根の設定を読む
+function worktreeCase(name, configRel) {
+	try {
+		const main = makeRepo();
+		commitAll(main.git, 'init');
+		const wt = path.join(root, `wt-cfg-${caseNo}`);
+		gitIn(main.repo, main.env, 'worktree', 'add', '-q', '-b', 'feature', wt);
+		// 設定は worktree を作った後に、メインのチェックアウトの根だけに置く（worktree の根には無い）
+		const full = path.join(main.repo, ...configRel.split('/'));
+		fs.mkdirSync(path.dirname(full), { recursive: true });
+		fs.writeFileSync(full, wrangler);
+		fs.mkdirSync(path.join(wt, '.wrangler'), { recursive: true });
+		fs.writeFileSync(path.join(wt, '.wrangler', 'state.json'), 's\n');
+		const r = runWrapper(main, '', 'review', wt);
+		const ok = !r.called && r.code !== 0 && r.stderr.includes('秘密情報') && r.stderr.includes('.wrangler/state.json');
+		report(`止まる: ${name}`, ok, `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(`止まる: ${name}`, false, String(e.message));
+	}
+}
+worktreeCase('設定: worktree の根に設定が無く、メインのチェックアウトの .claude/ai-team.json に .wrangler/ がある', '.claude/ai-team.json');
+worktreeCase('設定: worktree の根にもメインの .claude/ にも設定が無く、メインの claude/ai-team.json に .wrangler/ がある', 'claude/ai-team.json');
+
+// 共有モジュールの置き方の確かめ：ラッパーのコピーの 3 つ上に hooks/ を置く（skills/codex/scripts/ の形）
+function makeWrapperTree(hooksKind) {
+	const tree = path.join(root, `wrapper-tree-${hooksKind}-${caseNo}`);
+	const scripts = path.join(tree, 'skills', 'codex', 'scripts');
+	fs.mkdirSync(scripts, { recursive: true });
+	fs.copyFileSync(wrapper, path.join(scripts, 'invoke-codex.ps1'));
+	const realHooks = path.join(here, '..', '..', '..', 'hooks');
+	const hooks = path.join(tree, 'hooks');
+	if (hooksKind === 'junction') {
+		fs.symlinkSync(realHooks, hooks, 'junction');
+	} else {
+		fs.mkdirSync(hooks, { recursive: true });
+		fs.writeFileSync(path.join(hooks, 'ai-team-config.mjs'), 'process.exit(0);\n');
+	}
+	return path.join(scripts, 'invoke-codex.ps1');
+}
+
+// hooks/ がジャンクション経由でも、秘密情報で review が止まる（起動の判定が実体のパスにそろっている）
+try {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	ctx.write('.dev.vars', 'S=1\n');
+	let tree = null;
+	try {
+		tree = makeWrapperTree('junction');
+	} catch {
+		console.log('skip hooks がジャンクション経由の確かめ（ジャンクションを作れない環境）');
+	}
+	if (tree) {
+		const r = runWrapper(ctx, '', 'review', ctx.repo, tree);
+		report('止まる: hooks/ がジャンクション経由でも、未追跡の .dev.vars で review が止まる', !r.called && r.code !== 0 && r.stderr.includes('秘密情報'), `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
+	}
+} catch (e) {
+	report('止まる: hooks/ がジャンクション経由でも、未追跡の .dev.vars で review が止まる', false, String(e.message));
+}
+
+// 共有モジュールが何も書かずに終了コード 0 で終わる（印が無い）と、確かめが済んだか分からないので止まる
+try {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	const r = runWrapper(ctx, '', 'consult', ctx.repo, makeWrapperTree('stub'));
+	report('止まる: 共有モジュールが印を書かずに 0 で終わると、consult も止まる', !r.called && r.code !== 0 && r.stderr.includes('済んだか分からない'), `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
+} catch (e) {
+	report('止まる: 共有モジュールが印を書かずに 0 で終わると、consult も止まる', false, String(e.message));
+}
 
 // ---- 返事の保存先（Git に無視されるか）の7本。偽物の codex で、保存まで通す ----
 const envForGit = buildEnv(path.join(root, 'mark-unused.txt'));

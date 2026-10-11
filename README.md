@@ -31,14 +31,38 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `claude/skills/codex/scripts/test-invoke-codex.mjs` | ガネーシャ・メジェド | `.claude/skills/codex/scripts/test-invoke-codex.mjs`。ラッパーの review の前の秘密情報の確かめの確認（`node .claude/skills/codex/scripts/test-invoke-codex.mjs`）。偽物の `codex` と仮の Git のリポジトリだけを使い、本物の健さんは呼ばない |
 | `repo-files/codex/AGENTS.md` | 健さん | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲。同じ場所に `AGENTS.override.md` を置かない（そちらが優先される） |
 | `claude/hooks/guard-code-edit.mjs` | 全員 | `.claude/hooks/guard-code-edit.mjs`。編集の直前に「誰が・どこを」編集するかを見て止める |
+| `claude/hooks/ai-team-config.mjs` | 全員 | `.claude/hooks/ai-team-config.mjs`。ガードと健さんのラッパーが使う判定の部品（秘密情報の既定の一覧・`ai-team.json` の読み込みとグロブ）。リポジトリでは書き換えない |
+| `claude/ai-team.json` | 全員 | `.claude/ai-team.json`。リポジトリごとの秘密情報のパターン（`secretPatterns`）と、ガネーシャが確認なしで編集できるパス（`plannerWritable`）の追加。ガードと健さんのラッパーが読む。既定の一覧に足すだけで、外すことはできない |
 | `claude/hooks/test-guard-code-edit.mjs` | 全員 | `.claude/hooks/test-guard-code-edit.mjs`。フックの確かめ（`node .claude/hooks/test-guard-code-edit.mjs`）。フックに入力の JSON を流して終了コードを見る。git は呼ばない |
 | `claude/settings.json` | 全員 | `.claude/settings.json`。フックの登録と、git・秘密情報の権限 |
 | `repo-files/gitignore.snippet` | 全員 | 各リポジトリの `.gitignore` に足す行（`.claude/worktrees/`・`docs/tasks/*/codex/`） |
 
+### `ai-team.json` の書き方
+
+リポジトリごとの違いのうち、フックと健さんのラッパーが読むものは、`.claude/ai-team.json`（このリポジトリでは `claude/ai-team.json`）に書く。フックやラッパーのコードは書き換えない。
+
+```json
+{
+	"secretPatterns": ["**/.wrangler/**"],
+	"plannerWritable": ["data/*.json"]
+}
+```
+
+- キーは `secretPatterns`（誰も編集できない・健さんも開かないパス）と `plannerWritable`（ガネーシャが確認なしで編集できるパス）の2つだけ。どちらもグロブの文字列の配列で、**既定の一覧に足すだけ**。既定の4つ（`.env*`・`.dev.vars`・`.kv/`・`wp-config.php`）は外せない
+- グロブは、リポジトリの根からの相対パスに当てる。区切りは `/`、小文字で書く（Windows では、パスを小文字にそろえてから当てる）
+- 記号は3つだけ。`**`（`/` をまたいで0文字以上）・`*`（`/` 以外の0文字以上）・`?`（`/` 以外の1文字）。ほかの文字は、`.` や `(` なども含めて、ただの文字
+- `**/` は、先頭でも途中でも区切りごと省ける（0個以上のディレクトリ）。最後の `/**` も区切りごと省けて、そのもの自身とその中に当たる
+- `\`・`[`・`]`・`{`・`}` を含むもの、空の文字列、`/` で始まるものは、壊れているものとして扱う
+- 例：`**/.wrangler/**` は、根の直下も含めて、どの深さの `.wrangler` も、その中も当たる。`data/*.json` は `data/a.json` に当たり、`data/sub/a.json` には当たらない。`private/**/token.json` は `private/token.json` にも `private/a/b/token.json` にも当たる
+- 壊れているとき（JSON として読めない・UTF-8 でない・知らないキー（大文字小文字も区別する）・配列や文字列でない・グロブが壊れている）、ガードは設定ファイル自体の編集（確認）を除いてすべての編集を止め、健さんのラッパーは健さんを呼ばずに止まる。黙って既定の一覧に戻ると、足したはずの秘密情報が守られなくなるため
+- 設定ファイルか親の `.claude/` がリンク（シンボリックリンク・ジャンクション）で、リンク先が無いときも、「無い」とは扱わずに止める。このときは、設定ファイル自体の編集も止まるので、リンクを手で直す
+- 設定ファイル自体の編集は、中身が壊れていても、`secretPatterns` が設定ファイル自体に当たっても、いつも確認（ask）で通す（直す道を残すため）。ただし、設定ファイルがリンクのときは、この例外を使わず、ふつうの判定をする（リンク先が秘密情報なら止まる）
+- 文字コードは UTF-8 だけ（先頭の BOM は取り除く）。UTF-16・UTF-32 は壊れているものとして扱う
+
 ## ファイルの分け方
 
 - **CLAUDE.md**：リポジトリの説明（構成、ビルド方法、テーマ・プラグイン情報など）。先頭で `@docs/team/Ganesha.md` を取り込む
-- **docs/team/common-rules.md**：共通規約とチェックコマンド。ガネーシャは取り込みで、メジェドと adversary は作業の最初に Read で読む
+- **docs/team/common-rules.md**：共通規約・チェックコマンド・レビューの観点・計画の書き方。ガネーシャは取り込みで、メジェドと adversary は作業の最初に Read で読む
 - **docs/team/Ganesha.md**：ガネーシャの役割・キャラ設定・禁止事項
 - **docs/team/workflow.md**：作業の流れの正本。取り込みには入れず、スキル・メジェド・adversary が作業の最初に Read で読む
 - **.claude/agents/mejed.md**：メジェドの役割・キャラ設定・禁止事項（メジェドの定義はここだけ）
@@ -52,22 +76,25 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 | # | 当たるパス | ガネーシャ | メジェド（mejed） | ほかのサブエージェント |
 | --- | --- | --- | --- | --- |
-| 1 | リポジトリの外（`~/.claude/projects/<p>/memory/`・`~/.claude/plans/`・`<一時ディレクトリ>/claude/` を除く） | × | × | × |
-| 2 | 秘密情報（`.dev.vars`、`.kv/`、`wp-config.php`、`.env`） | × | × | × |
-| 3 | `.claude/` の下（ただし `.claude/worktrees/` の下は除く。頭を剥がした後のパスで判定する） | 確認 | 確認 | 確認 |
-| 4 | `docs/team/` の下・リポジトリの根の `CLAUDE.md`（`Ganesha.md` を取り込む入口なので `docs/team/` と同じに守る） | 確認 | 確認 | 確認 |
-| 5 | `docs/tasks/<タスク名>/plan.md` | ○ | × | ○ |
-| 6 | `docs/tasks/` の下・Markdown（`.md`）・`.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` の下 | ○ | ○ | ○ |
-| 7 | それ以外（コード） | × | ○ | × |
+| 1 | `.claude/ai-team.json`（設定ファイル自体）。中身が壊れていても、`secretPatterns` が当たっても、誰も確認。ただし、設定ファイルがリンクのとき（リンク先があってもなくても）は、この行に当てず、下の行で判定する（リンク先が秘密情報なら×）。設定ファイルか親の `.claude/` がリンク切れのときは、この行も含めて全部止める（×） | 確認 | 確認 | 確認 |
+| 2 | リポジトリの外（`~/.claude/projects/<p>/memory/`・`~/.claude/plans/`・`<一時ディレクトリ>/claude/` を除く） | × | × | × |
+| 3 | 秘密情報（`.dev.vars`、`.kv/`、`wp-config.php`、`.env`。＋ `.claude/ai-team.json` で足したもの） | × | × | × |
+| 4 | `.claude/` の下（ただし `.claude/worktrees/` の下は除く。頭を剥がした後のパスで判定する） | 確認 | 確認 | 確認 |
+| 5 | `docs/team/` の下・リポジトリの根の `CLAUDE.md`（`Ganesha.md` を取り込む入口なので `docs/team/` と同じに守る） | 確認 | 確認 | 確認 |
+| 6 | `docs/tasks/<タスク名>/plan.md` | ○ | × | ○ |
+| 7 | `docs/tasks/` の下・Markdown（`.md`）・`.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` の下（＋ `.claude/ai-team.json` の `plannerWritable` で足したもの） | ○ | ○ | ○ |
+| 8 | それ以外（コード） | × | ○ | × |
 
 「確認」は、フックが `permissionDecision: "ask"` を返して、まーちゅうの確認を取る（理由は「チームの設定・規約なので、まーちゅうの確認を取る」）。
+
+設定ファイルが壊れているときは、1 の行のほかは全部止まる。リンク切れのときは、1 の行も含めて全部止まるので、リンクを手で直す。設定ファイルがリンクのときは、1 の行は使わない。
 
 - Markdown を通すのは「コード以外（.md）の PR レビューの指摘はガネーシャが直す」（Ganesha.md）ため
 - adversary は tools に Edit / Write を持たないので、そもそもフックまで届かない。ファイルを書ける経路は Bash・PowerShell（リダイレクト・`sed -i`・`git stash` など）だけで、adversary.md の禁止事項で縛っている（Bash・PowerShell はフックの対象外）
 - Windows のファイルシステムは大文字小文字を区別しないので、Windows ではパスを小文字にそろえてから照合する（`.DEV.VARS` も止まる）
 - 判定は「指定されたパス」と「シンボリックリンク（ジャンクションを含む）をたどった実体のパス」の両方に当てる。リンク経由で秘密情報・コード・リポジトリの外を書き換えることはできない。2つの判定が違うときは、きつい方（止める > 確認 > 通す）を取る
-- 3 は、メインのチェックアウトでは Claude Code の protected paths（`.claude/` の下への書き込みを自動では通さない仕組み）と重なる。`.claude/worktrees/` の下は protected paths の例外で守られないので、worktree の中の `.claude/`（スキル・エージェント・フック）を守るのが目的。auto モードで、フックの確認と protected paths の分類器のどちらが先に効くかは、確かめていない
-- 4 は、共通規約・作業の流れ・Ganesha.md を、ガネーシャが確認なしで書き換えられないようにするため。5 は、メジェドが計画書を書き換えられないようにするため
+- 4 は、メインのチェックアウトでは Claude Code の protected paths（`.claude/` の下への書き込みを自動では通さない仕組み）と重なる。`.claude/worktrees/` の下は protected paths の例外で守られないので、worktree の中の `.claude/`（スキル・エージェント・フック）を守るのが目的。auto モードで、フックの確認と protected paths の分類器のどちらが先に効くかは、確かめていない
+- 5 は、共通規約・作業の流れ・Ganesha.md を、ガネーシャが確認なしで書き換えられないようにするため。6 は、メジェドが計画書を書き換えられないようにするため
 - `.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` は、コードではない設定なので、ガネーシャが編集できる（各リポジトリへの反映で `.gitignore` に `.claude/worktrees/` を足すのに要る）
 - `~/.claude/` は丸ごと通さない。ユーザー共通の settings.json・CLAUDE.md・スキル・認証情報が入っているので、メモリと計画ファイルの2か所だけにする
 
@@ -97,7 +124,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | --- | --- |
 | メジェドが review.md の指摘欄・判定欄を書き換えられる | フックはファイル単位でしか判定できず、メジェドは「対応」欄を書く必要がある。mejed.md の禁止事項で頼み、diff-reviewer が差分で見る |
 | `.env.example` が読めない・編集できない | Read の deny には例外の書き方（`!` で始まるパターン）があるが、使わない。`.env.example` にうっかり本物の値を写してしまうことがあり、確かめずに読ませないため。読めない側に倒す。見せたいときは、まーちゅうが中身を確かめて貼る |
-| データの JSON をガネーシャが編集できない | リポジトリごとに場所が違う。要るリポジトリで `PLANNER_WRITABLE` に足す（反映のときに各リポジトリで決める） |
+| データの JSON をガネーシャが編集できない | リポジトリごとに場所が違う。要るリポジトリで `.claude/ai-team.json` の `plannerWritable` に足す |
 | Bash・PowerShell 経由の書き込みはフックに見えない | 編集のフックは Edit・Write などの編集ツールにだけ登録している（Claude Code のフックの仕組み）。「導入後に確認すること」を参照 |
 
 ## 使い方
@@ -138,10 +165,10 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 ## 導入方法
 
 1. テンプレートの写す版を先に決める。最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを写す版として書き留める。その版の中身（`git show` などで読む）から写す。詳しいやり方は「テンプレートを直した後の反映」の「写す版を決める」を参照（作業の途中でテンプレートが進んでも、その版のまま反映するため）
-2. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）
+2. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない。既存の `ai-team.json` があれば、足したパターンを消さないよう、中身を残す）
 3. `repo-files/docs/team/` をリポジトリの `docs/team/` に置き（common-rules.md・Ganesha.md・workflow.md の3つが入る）、`CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
-4. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す
-5. 案件に合わせて `guard-code-edit.mjs` の `SECRET_PATTERNS` を足す（フックの `SECRET_PATTERNS`・ラッパーの `$SecretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。健さんの AGENTS.md は、読むリポジトリのフックを見るので直さなくてよい）
+4. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。同じ common-rules.md の「レビューの観点」と「計画の書き方」も、案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す
+5. 案件に合わせて `.claude/ai-team.json` の `secretPatterns` に足す（フックとラッパーはこれを読む。settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条も、同じにそろえる。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
 6. 健さん（Codex）を使うなら
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
    - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
@@ -179,7 +206,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ### 取り入れるかを決める
 
-変更ごとに、そのリポジトリの固有の上書き（チェックコマンド・`SECRET_PATTERNS`・レビューの観点・plan.md の雛形・settings.json の allow など）と見比べて、取り入れるかを決める。取り入れないものは、PR 本文の「残したもの」に理由を書く。テンプレートが持たないもの（ボードの Status など）を使っているなら、固有の上書きとして残してよい。
+変更ごとに、そのリポジトリの固有の上書き（チェックコマンド・`.claude/ai-team.json`・レビューの観点・plan.md の雛形・settings.json の allow など）と見比べて、取り入れるかを決める。取り入れないものは、PR 本文の「残したもの」に理由を書く。テンプレートが持たないもの（ボードの Status など）を使っているなら、固有の上書きとして残してよい。
 
 ### 残すものが消えていないかを確かめる
 
@@ -223,4 +250,4 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 - **Bash・PowerShell 経由の書き込みは止まらない**：`echo > file` や `sed -i`、PowerShell の `Set-Content` のようなシェル経由の書き込みは、このフックの対象外。
   **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
-- **秘密情報**：案件に応じて、パターンを追加・削除する（フックの `SECRET_PATTERNS`・ラッパーの `$SecretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。健さんの AGENTS.md は、読むリポジトリのフックを見るので直さなくてよい）
+- **秘密情報**：案件に応じて、パターンを追加する（`.claude/ai-team.json` の `secretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。既定の4つは `ai-team-config.mjs` の `SECRET_PATTERNS` にあり、設定ファイルでは外せない。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
