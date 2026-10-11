@@ -1,18 +1,19 @@
 ﻿# invoke-codex.ps1
 # Claude Code（ガネーシャ・メジェド）から Codex CLI（健さん）を呼ぶラッパー。
 # モードは consult（読むだけの相談）・review（読むだけのレビュー）・image（画像の生成）の3つだけ。
-# と、/code-review の結果を保存するだけの save-code-review（codex は呼ばない）。
+# と、codex を呼ばない2つ：/code-review の結果を保存するだけの save-code-review と、
+# コミットの前の差分を /code-review に渡すパッチのファイルにするだけの make-patch。
 # 実装（ファイルの書き換え）は頼まない。sandbox は常に read-only。
 #
 # 呼び方（リポジトリの根から、Bash ツールで）:
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1 -Mode consult -Task <タスク名> -PromptFile <一時ファイル>
 #
-# 終了コード: 0 = 成功 / 1 = 呼ぶ前の確認で止めた / 2 = image で画像のパスが取れなかった / それ以外 = codex の終了コード
+# 終了コード: 0 = 成功 / 1 = 呼ぶ前の確認で止めた / 2 = image で画像のパスが取れなかった / 4 = make-patch で見せる差分が無い / それ以外 = codex の終了コード
 
 [CmdletBinding()]
 param(
 	[Parameter(Mandatory = $true)]
-	[ValidateSet('consult', 'review', 'image', 'save-code-review')]
+	[ValidateSet('consult', 'review', 'image', 'save-code-review', 'make-patch')]
 	[string] $Mode,
 
 	# 返事を docs/tasks/<Task>/codex/ に保存するためのタスク名（必須）
@@ -30,11 +31,14 @@ param(
 	# review でコミット済みの差分を見るときの基準ブランチ（無ければ未コミットの変更を見る）
 	[string] $Base = '',
 
-	# save-code-review で必須。/code-review の結果を保存する段（plan だけ）
+	# save-code-review で必須。/code-review の結果を保存する段（plan・pr・check のどれか）
 	[string] $Stage = '',
 
 	# save-code-review で必須。保存する中身のファイル（UTF-8）
-	[string] $InputFile = ''
+	[string] $InputFile = '',
+
+	# make-patch で必須。パッチを書くファイル
+	[string] $OutFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +64,11 @@ if ($Task -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
 	Stop-Wrapper "-Task は英数字で始め、英数字と . _ - だけを使ってください: $Task"
 }
 
-if ($Mode -ne 'save-code-review' -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
+if ($Mode -eq 'make-patch' -and [string]::IsNullOrWhiteSpace($OutFile)) {
+	Stop-Wrapper '-OutFile（パッチを書くファイル）が無いので、パッチを作りません。make-patch で必須です。'
+}
+
+if ($Mode -ne 'save-code-review' -and $Mode -ne 'make-patch' -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
 	Stop-Wrapper 'codex が PATH にありません。npm install -g @openai/codex で入れて、codex login を打ってから呼んでください。'
 }
 
@@ -183,8 +191,8 @@ function Save-Reply {
 # 保存先の決め方は Save-Reply（consult・review・image と同じ）。名前だけ docs/tasks/<Task>/code-review/<連番>-<Stage>.md と
 # <一時ディレクトリ>/code-review-replies/… にする
 if ($Mode -eq 'save-code-review') {
-	if ($Stage -ne 'plan') {
-		Stop-Wrapper "-Stage は plan だけです（PR の前と K2 は別のイシューで決めます）: $Stage"
+	if (@('plan', 'pr', 'check') -cnotcontains $Stage) {
+		Stop-Wrapper "-Stage は plan・pr・check のどれかです: $Stage"
 	}
 	if ([string]::IsNullOrWhiteSpace($InputFile) -or -not (Test-Path -LiteralPath $InputFile -PathType Leaf)) {
 		Stop-Wrapper "保存する中身のファイル（-InputFile）が見つかりません: $InputFile"
@@ -199,7 +207,7 @@ if ($Mode -eq 'save-code-review') {
 }
 
 $Prompt = ''
-if ($Mode -ne 'review') {
+if ($Mode -ne 'review' -and $Mode -ne 'make-patch') {
 	if ([string]::IsNullOrWhiteSpace($PromptFile) -or -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) {
 		Stop-Wrapper "頼みの文のファイル（-PromptFile）が見つかりません: $PromptFile"
 	}
@@ -212,19 +220,24 @@ if ($Mode -ne 'review') {
 # ---- 設定ファイルと秘密情報の確認 ----
 # 判定は共有モジュール（hooks/ai-team-config.mjs）に任せる（ガードと同じ判定にするため）。
 # review は健さんに変更を渡す（--uncommitted: ステージ済み・未ステージ・未追跡 / --base: 基準ブランチとの差分と、見込みでは未コミットの変更）。
-# 渡る変更のすべてのパスを集めて、呼ぶ前に秘密情報のパターンと照らす。review でなければ、パスは空（設定ファイルの確かめだけをする）
+# 渡る変更のすべてのパスを集めて、呼ぶ前に秘密情報のパターンと照らす。review でなければ、パスは空（設定ファイルの確かめだけをする）。
+# make-patch は review と同じ集め方（ただしサブモジュールの参照の変更も拾う）に、実体のパスの照らし合わせ（--resolve-real）を足す。パッチにはファイルの中身が入るため
 $GitPaths = @()
-if ($Mode -eq 'review') {
+if ($Mode -eq 'review' -or $Mode -eq 'make-patch') {
 	# git status の -uall: 未追跡のディレクトリを1行にまとめず、中のファイルまで出す。-z: 空白や日本語のパスを引用符で囲まない
 	Push-Location -LiteralPath $RepoRoot
 	try {
 		$previous = $ErrorActionPreference
 		$ErrorActionPreference = 'Continue'
-		$status = (& git status --porcelain -z -uall 2>$null) -join "`n"
+		if ($Mode -eq 'make-patch') {
+			$status = (& git status --porcelain -z -uall --ignore-submodules=none 2>$null) -join "`n"
+		} else {
+			$status = (& git status --porcelain -z -uall 2>$null) -join "`n"
+		}
 		$gitCode = $LASTEXITCODE
 		$diffNames = ''
 		$diffCode = 0
-		if (-not [string]::IsNullOrWhiteSpace($Base)) {
+		if ($Mode -eq 'review' -and -not [string]::IsNullOrWhiteSpace($Base)) {
 			# --no-renames: 名前を変えたファイルを「元の名前の削除」と「新しい名前の追加」に分け、両方のパスを出させる
 			$diffNames = (& git diff --name-only --no-renames -z "$Base...HEAD" -- 2>$null) -join "`n"
 			$diffCode = $LASTEXITCODE
@@ -271,13 +284,14 @@ New-Item -ItemType Directory -Path $CheckDir -Force | Out-Null
 $checkCode = 1
 $checkOut = ''
 try {
-	$pathsFile = Join-Path $CheckDir 'paths.bin'
-	$outFile = Join-Path $CheckDir 'out.txt'
+	$checkPathsFile = Join-Path $CheckDir 'paths.bin'
+	$checkOutFile = Join-Path $CheckDir 'out.txt'
 	# NUL 区切りの UTF-8（BOM なし）。標準入出力を通さないのは、Windows PowerShell 5.1 の文字コードで日本語のパスが化けるため
-	[System.IO.File]::WriteAllBytes($pathsFile, $utf8.GetBytes(($GitPaths -join [string][char]0)))
+	[System.IO.File]::WriteAllBytes($checkPathsFile, $utf8.GetBytes(($GitPaths -join [string][char]0)))
 	$nodeArgs = @($ConfigModule, 'check')
 	foreach ($root in $CheckRoots) { $nodeArgs += @('--root', $root) }
-	$nodeArgs += @('--paths-file', $pathsFile, '--out', $outFile)
+	$nodeArgs += @('--paths-file', $checkPathsFile, '--out', $checkOutFile)
+	if ($Mode -eq 'make-patch') { $nodeArgs += '--resolve-real' }
 	$previous = $ErrorActionPreference
 	$ErrorActionPreference = 'Continue'
 	try {
@@ -286,15 +300,21 @@ try {
 	} finally {
 		$ErrorActionPreference = $previous
 	}
-	if (Test-Path -LiteralPath $outFile -PathType Leaf) { $checkOut = [System.IO.File]::ReadAllText($outFile, $utf8) }
+	if (Test-Path -LiteralPath $checkOutFile -PathType Leaf) { $checkOut = [System.IO.File]::ReadAllText($checkOutFile, $utf8) }
 } finally {
 	Remove-Item -LiteralPath $CheckDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($checkCode -eq 3) {
 	$secrets = @($checkOut -split "`n" | Where-Object { $_ -ne '' } | Select-Object -Unique)
+	if ($Mode -eq 'make-patch') {
+		Stop-Wrapper ('パッチに入る変更に秘密情報のファイルがあるので、パッチを作りません（未追跡・ステージ済み・書き換え・名前の変更のどれも、パッチに中身が入るため。リンクの先の実体も照らしています）: ' + ($secrets -join ', '))
+	}
 	Stop-Wrapper ('健さんに渡る変更に秘密情報のファイルがあるので、review を呼びません（未追跡・ステージ済み・書き換え・名前の変更・基準ブランチとの差分のどれも Codex に送られるため）: ' + ($secrets -join ', '))
 }
 if ($checkCode -eq 2) {
+	if ($Mode -eq 'make-patch') {
+		Stop-Wrapper ("設定ファイル（.claude/ai-team.json）が壊れているので、パッチを作りません（黙って既定の一覧に戻ると、足した秘密情報が守られないため）: $checkOut")
+	}
 	Stop-Wrapper ("設定ファイル（.claude/ai-team.json）が壊れているので、健さんを呼びません（黙って既定の一覧に戻ると、足した秘密情報が守られないため）: $checkOut")
 }
 if ($checkCode -ne 0) {
@@ -303,6 +323,86 @@ if ($checkCode -ne 0) {
 # 終了コード 0 でも、共有モジュールが印を書いていなければ、確かめが済んだか分からない（リンク経由の起動で何もせずに終わった場合など）
 if (($checkOut -split "`n" | Select-Object -First 1).Trim() -ne 'ai-team-config: ok') {
 	Stop-Wrapper '秘密情報と設定ファイルの確かめが済んだか分からないので、健さんを呼びません（共有モジュールが印を返しませんでした）。'
+}
+
+# ---- make-patch：コミットの前の差分をパッチのファイルにするだけ（codex は呼ばない） ----
+# 秘密情報・設定ファイルの確かめ（実体のパスも）は済んでいる。パッチは、利用者の Git の設定に左右されないよう、設定に関わるオプションをはっきり付けて作る。
+# 出力は文字列にせず、バイト列のまま扱う（改行コードや文字を変えないため）
+function ConvertTo-ArgumentString {
+	param([string] $Arg)
+	if ($Arg -ne '' -and $Arg -notmatch '[\s"()]') { return $Arg }
+	$escaped = $Arg -replace '(\\*)"', '$1$1\"'
+	$escaped = $escaped -replace '(\\+)$', '$1$1'
+	return '"' + $escaped + '"'
+}
+
+function Invoke-GitRaw {
+	param([string[]] $GitArguments)
+	$gitCommand = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+	if ($null -eq $gitCommand) { Stop-Wrapper 'git が PATH にありません。' }
+	$psi = New-Object System.Diagnostics.ProcessStartInfo
+	$psi.FileName = $gitCommand.Source
+	$psi.Arguments = (@($GitArguments | ForEach-Object { ConvertTo-ArgumentString $_ })) -join ' '
+	$psi.WorkingDirectory = $RepoRoot
+	$psi.UseShellExecute = $false
+	$psi.RedirectStandardOutput = $true
+	$psi.RedirectStandardError = $true
+	$psi.CreateNoWindow = $true
+	$proc = [System.Diagnostics.Process]::Start($psi)
+	$errTask = $proc.StandardError.ReadToEndAsync()
+	$ms = New-Object System.IO.MemoryStream
+	try {
+		$proc.StandardOutput.BaseStream.CopyTo($ms)
+		$proc.WaitForExit()
+		return @{ Code = $proc.ExitCode; Bytes = $ms.ToArray(); Error = $errTask.Result }
+	} finally {
+		$ms.Dispose()
+		$proc.Dispose()
+	}
+}
+
+if ($Mode -eq 'make-patch') {
+	$outFull = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path $CallerDirectory $OutFile }
+	$outFull = [System.IO.Path]::GetFullPath($outFull)
+	$excludeSpec = ":(exclude)docs/tasks/$Task/"
+	$patch = New-Object System.IO.MemoryStream
+
+	# (1) 追跡しているファイルの差分
+	$tracked = Invoke-GitRaw @('-c', 'core.quotepath=false', 'diff', 'HEAD', '-M', '--no-ext-diff', '--no-textconv', '--no-color', '--submodule=short', '--ignore-submodules=none', '--', '.', $excludeSpec)
+	if ($tracked.Code -ne 0) { Stop-Wrapper "git diff HEAD が失敗しました（コミットが無い・Git のリポジトリでない、など）: $($tracked.Error.Trim())" }
+	$patch.Write($tracked.Bytes, 0, $tracked.Bytes.Length)
+
+	# (2) 未追跡のファイル
+	$listed = Invoke-GitRaw @('-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard', '-z', '--', '.', $excludeSpec)
+	if ($listed.Code -ne 0) { Stop-Wrapper "git ls-files が失敗しました: $($listed.Error.Trim())" }
+	foreach ($rel in ($utf8.GetString($listed.Bytes) -split [char]0)) {
+		if ($rel -eq '') { continue }
+		# --no-index は取れなかったときも 1 を返し、正常と区別できないので、渡す前にふつうのファイルかを確かめる（入れ子のリポジトリ・ディレクトリは止める）
+		if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $rel) -PathType Leaf)) {
+			Stop-Wrapper "未追跡の項目がふつうのファイルではないので、パッチを作りません（入れ子のリポジトリなど）: $rel"
+		}
+		# 名前がちょうど - のファイルは、Git が標準入力と読むので ./- にして渡す
+		$fileArg = if ($rel -eq '-') { './-' } else { $rel }
+		$one = Invoke-GitRaw @('-c', 'core.quotepath=false', 'diff', '--no-index', '--no-ext-diff', '--no-textconv', '--no-color', '--', '/dev/null', $fileArg)
+		if ($one.Code -ne 0 -and $one.Code -ne 1) { Stop-Wrapper "未追跡のファイルの差分が取れませんでした（git の終了コード $($one.Code)）: $rel" }
+		# 取れなかったときも 1 を返すので、標準エラーが空でないとき、終了コード 1 で出力が空のときも止める（そのファイルを欠いたパッチで成功しないため。理由に入れるのは Git のエラーの文だけで、ファイルの中身は入れない）
+		# 改行コードの警告（warning: …LF will be replaced by CRLF…）は取れている印なので、warning: で始まる行は数えない
+		$gitErrors = @(($one.Error -split "`r?`n") | Where-Object { $_.Trim() -ne '' -and $_ -notmatch '^\s*warning:' })
+		if ($gitErrors.Count -gt 0) { Stop-Wrapper "未追跡のファイルの差分が取れませんでした（git のエラー）: $rel : $($gitErrors -join ' ')" }
+		if ($one.Code -eq 1 -and $one.Bytes.Length -eq 0) { Stop-Wrapper "未追跡のファイルの差分が空でした（git の終了コード 1）: $rel" }
+		$patch.Write($one.Bytes, 0, $one.Bytes.Length)
+	}
+
+	if ($patch.Length -eq 0) {
+		Stop-Wrapper '見せる差分が無いので、パッチを作りませんでした（docs/tasks/<タスク名>/ の下は入れません）。' 4
+	}
+	$patchBytes = $patch.ToArray()
+	$patch.Dispose()
+	[System.IO.File]::WriteAllBytes($outFull, $patchBytes)
+	$fileCount = [regex]::Matches($utf8.GetString($patchBytes), '(?m)^diff --git ').Count
+	Write-Output "PATCH: $outFull"
+	Write-Output "FILES: $fileCount"
+	exit 0
 }
 
 # 一時ディレクトリ（終わったら消す）
