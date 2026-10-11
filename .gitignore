@@ -1,4 +1,5 @@
 docs/tasks/public-release/
 
-# 健さん（Codex）の返事の保存先（まーちゅうが読むため。Git には入れない）
+# 健さん（Codex）と /code-review の返事の保存先（まーちゅうが読むため。Git には入れない）
 docs/tasks/*/codex/
+docs/tasks/*/code-review/
