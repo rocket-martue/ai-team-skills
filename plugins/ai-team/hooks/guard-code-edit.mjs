@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // PreToolUse フック：ファイル編集を「誰が」「どこに」するかで止める。
-// - メジェド（サブエージェント mejed）だけがコードを編集できる
+// - メジェド（サブエージェント mejed。プラグインでは ai-team:mejed）だけがコードを編集できる
 // - ガネーシャ（メインのエージェント）が書けるのは docs/tasks/ の中と、Markdown（.md）の文書と、一部の設定（.gitignore など）だけ
 // - .claude/・docs/team/・根の CLAUDE.md は、誰が書くときも確認（ask）を出す
 // - メジェドは docs/tasks/<タスク名>/plan.md を書き換えられない
@@ -16,7 +16,8 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { forMatch, isSecretPath, readConfig, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
 
-const IMPLEMENTER = 'mejed';
+// エージェントの名前：プラグインに切り替える前のリポジトリでは 'mejed'、プラグインのエージェントは 'ai-team:mejed'。
+const IMPLEMENTERS = ['mejed', 'ai-team:mejed'];
 
 // 確認（ask）を出すパス（リポジトリのルートから）。チームの設定・規約。
 // - .claude/ の下（ただし .claude/worktrees/ の下は除く。そこは worktree の置き場所で、頭を剥がした後のパスで判定する）
@@ -122,7 +123,7 @@ function judge(absolute, projectDir, outsideWritable, label, config) {
 		return { level: ASK, reason: ASK_REASON };
 	}
 
-	const isImplementer = isSubagent && agentType === IMPLEMENTER;
+	const isImplementer = isSubagent && IMPLEMENTERS.includes(agentType);
 
 	if (PLAN_FILE.test(rel)) {
 		if (isImplementer) {

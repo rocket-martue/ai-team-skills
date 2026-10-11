@@ -9,7 +9,7 @@
       "Bash(gh repo view:*)",
       "Bash(git show:*)",
       "Bash(vendor/bin/phpcs:*)",
-      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1:*)"
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.ps1\" *)"
     ],
     "ask": [
       "Bash(git add:*)",
@@ -62,20 +62,6 @@
       "PowerShell(git rebase:*)",
       "PowerShell(git reset:*)",
       "PowerShell(gh pr merge:*)"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-code-edit.mjs"]
-          }
-        ]
-      }
     ]
   }
 }

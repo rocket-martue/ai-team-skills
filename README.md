@@ -1,10 +1,10 @@
 # AIチーム開発 スキル一式（下書き）
 
-Claude Code だけで回す体制のスキル・チーム設定・権限設定。
+Claude Code だけで回す体制のスキル・チーム設定・権限設定。共通のもの（スキル・エージェント・フック・作業の流れ・チーム共通の決まり）は Claude Code のプラグイン `ai-team` として配り、各リポジトリには固有の設定と決まりだけを置く。
 
 - **ガネーシャ**（Claude Code のメイン）＝ 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応
-- **メジェド**（サブエージェント `mejed`・既定は Haiku。plan.md で Sonnet を選べる）＝ 実装・指摘の修正
-- **adversary**（サブエージェント `adversary`・Fable）＝ 壊しに来る役。計画の承認前に（レビューの道で選んだとき）、1つの計画につき1回だけ、計画書を壊す側から読んで指摘だけを返す。直さない
+- **メジェド**（サブエージェント `ai-team:mejed`・既定は Haiku。plan.md で Sonnet を選べる）＝ 実装・指摘の修正
+- **adversary**（サブエージェント `ai-team:adversary`・Fable）＝ 壊しに来る役。計画の承認前に（レビューの道で選んだとき）、1つの計画につき1回だけ、計画書を壊す側から読んで指摘だけを返す。直さない
 - **健さん**（Codex CLI・外部委託業者）＝ 読むだけの相談・レビューと、画像の生成。スキル `codex` から呼ぶ。実装は頼まない。承認前・チェックが2回以上落ちたとき・PR の前の確認の中心（いずれもレビューの道で選んだとき）
 - **まーちゅう** ＝ 要件決定・計画の承認・最終確認・マージ
 
@@ -14,32 +14,58 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 ## 中身と置き場所
 
-`claude/` の中身を、リポジトリの `.claude/` にそのまま重ねる。
+このリポジトリは、Claude Code のマーケットプレイス `ai-team-skills`（根の `.claude-plugin/marketplace.json`）で、プラグイン `ai-team`（`plugins/ai-team/`）を配る。共通のものはプラグインに入り、リポジトリごとに違うもの（設定・固有の規約）は `repo-files/` から各リポジトリに写す。
+
+### プラグイン（`plugins/ai-team/`）
+
+プラグインを入れると、各リポジトリの `.claude/` に写さなくても、Claude Code が `<ユーザーのホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/` から読む。版は `plugin.json` に書かず、コミットの SHA で追う。
+
+| ファイル | 担当 | 中身 |
+| --- | --- | --- |
+| `plugins/ai-team/docs/team-rules.md` | 全員 | チーム共通の決まり（言語・作業の進め方・チームの表・健さんに頼むときの決まり）。ガネーシャにはセッションの始めに SessionStart フックで入る。メジェドと adversary は作業の最初に Read で読む |
+| `plugins/ai-team/docs/workflow.md` | 全員 | 作業の流れ（フローチャート・言葉の決まり・回数の上限）の正本。いつも入れず、スキル・メジェド・adversary が作業の最初に Read で読む。場所は、SessionStart で入る頭の行に書いてある |
+| `plugins/ai-team/agents/mejed.md` | メジェド | キャラ・手順・報告の形式・禁止事項。モデルは Haiku（既定。plan.md の「メジェドのモデル」で Sonnet を選べる。呼ぶたびに model を明示して渡す）。呼ぶときの名前は `ai-team:mejed` |
+| `plugins/ai-team/agents/adversary.md` | adversary | 計画の問い・報告の形式・禁止事項。モデルは Fable。呼ぶときの名前は `ai-team:adversary` |
+| `plugins/ai-team/skills/plan-writer/` | ガネーシャ | 承認を頼む前に、承認前の1つ目（Fable か `/code-review`）を1回、その後は2つ目（健さんか `/code-review`）を採る指摘が0になるまで呼ぶ（レビューの道） |
+| `plugins/ai-team/skills/delegate-to-mejed/` | ガネーシャ | メジェドに実装を頼み、レビュー→修正を回す。PR の前にレビュー役（健さんの review か `/code-review`。レビューの道）を、採る指摘が0になるまで回す |
+| `plugins/ai-team/skills/diff-reviewer/` | ガネーシャ | PR 前の差分レビューと、PR に付いた指摘の対応 |
+| `plugins/ai-team/skills/codex/` | ガネーシャ・メジェド | 健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
+| `plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs` | ガネーシャ・メジェド | ラッパーの review・make-patch の前の秘密情報の確かめと、make-patch のパッチの確認。偽物の `codex` と仮の Git のリポジトリだけを使い、本物の健さんは呼ばない |
+| `plugins/ai-team/hooks/hooks.json` | 全員 | フックの登録。PreToolUse（編集のガード）と SessionStart（チーム共通の決まりを入れる） |
+| `plugins/ai-team/hooks/guard-code-edit.mjs` | 全員 | 編集の直前に「誰が・どこを」編集するかを見て止める |
+| `plugins/ai-team/hooks/session-start.mjs` | 全員 | `docs/team-rules.md` を、セッションの始めにメインのエージェントの文脈へ入れる。読めないとき・1万文字を超えるときは、Read を促す文を入れる（セッションは止めない） |
+| `plugins/ai-team/hooks/ai-team-config.mjs` | 全員 | ガードと健さんのラッパーが使う判定の部品（秘密情報の既定の一覧・`ai-team.json` の読み込みとグロブ）。リポジトリでは書き換えない |
+| `plugins/ai-team/hooks/test-guard-code-edit.mjs`・`test-session-start.mjs` | 全員 | フックの確かめ。フックに入力の JSON を流して終了コードを見る。git は呼ばない（ガードの確かめは、テンプレートのリポジトリでだけ打つ） |
+
+### リポジトリ側（`repo-files/` の中身を写す）
 
 | ファイル | 担当 | 置き場所 |
 | --- | --- | --- |
-| `repo-files/docs/team/common-rules.md` | 共通 | リポジトリの `docs/team/common-rules.md` |
+| `repo-files/docs/team/common-rules.md` | 共通 | リポジトリの `docs/team/common-rules.md`。このリポジトリ固有の決まり（コーディング・チェックコマンド・レビューの観点・計画の書き方）。ガネーシャは取り込みで、メジェドと adversary は作業の最初に Read で読む |
 | `repo-files/docs/team/Ganesha.md` | ガネーシャ | リポジトリの `docs/team/Ganesha.md` |
-| `repo-files/docs/team/workflow.md` | 全員 | リポジトリの `docs/team/workflow.md`。作業の流れ（フローチャート・言葉の決まり・回数の上限）の正本 |
 | `repo-files/CLAUDE.md.snippet` | ガネーシャ | 中身を `CLAUDE.md` の先頭に追記 |
-| `claude/agents/mejed.md` | メジェド | `.claude/agents/mejed.md`。キャラ・手順・報告の形式・禁止事項。モデルは Haiku（既定。plan.md の「メジェドのモデル」で Sonnet を選べる。呼ぶたびに model を明示して渡す） |
-| `claude/agents/adversary.md` | adversary | `.claude/agents/adversary.md`。計画の問い・報告の形式・禁止事項。モデルは Fable |
-| `claude/skills/plan-writer/` | ガネーシャ | `.claude/skills/plan-writer/`。承認を頼む前に、承認前の1つ目（Fable か `/code-review`）を1回、その後は2つ目（健さんか `/code-review`）を採る指摘が0になるまで呼ぶ（レビューの道） |
-| `claude/skills/delegate-to-mejed/` | ガネーシャ | `.claude/skills/delegate-to-mejed/`。メジェドに実装を頼み、レビュー→修正を回す。PR の前にレビュー役（健さんの review か `/code-review`。レビューの道）を、採る指摘が0になるまで回す |
-| `claude/skills/diff-reviewer/` | ガネーシャ | `.claude/skills/diff-reviewer/`。PR 前の差分レビューと、PR に付いた指摘の対応 |
-| `claude/skills/codex/` | ガネーシャ・メジェド | `.claude/skills/codex/`。健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
-| `claude/skills/codex/scripts/test-invoke-codex.mjs` | ガネーシャ・メジェド | `.claude/skills/codex/scripts/test-invoke-codex.mjs`。ラッパーの review・make-patch の前の秘密情報の確かめと、make-patch のパッチの確認（`node .claude/skills/codex/scripts/test-invoke-codex.mjs`）。偽物の `codex` と仮の Git のリポジトリだけを使い、本物の健さんは呼ばない |
+| `repo-files/claude/settings.json` | 全員 | `.claude/settings.json`。git・秘密情報の権限と、健さんのラッパーの allow（プラグインのフックは `hooks.json` にあるので、ここには無い） |
+| `repo-files/claude/ai-team.json` | 全員 | `.claude/ai-team.json`。リポジトリごとの秘密情報のパターン（`secretPatterns`）と、ガネーシャが確認なしで編集できるパス（`plannerWritable`）の追加。ガードと健さんのラッパーが読む。既定の一覧に足すだけで、外すことはできない |
 | `repo-files/codex/AGENTS.md` | 健さん | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲。同じ場所に `AGENTS.override.md` を置かない（そちらが優先される） |
-| `claude/hooks/guard-code-edit.mjs` | 全員 | `.claude/hooks/guard-code-edit.mjs`。編集の直前に「誰が・どこを」編集するかを見て止める |
-| `claude/hooks/ai-team-config.mjs` | 全員 | `.claude/hooks/ai-team-config.mjs`。ガードと健さんのラッパーが使う判定の部品（秘密情報の既定の一覧・`ai-team.json` の読み込みとグロブ）。リポジトリでは書き換えない |
-| `claude/ai-team.json` | 全員 | `.claude/ai-team.json`。リポジトリごとの秘密情報のパターン（`secretPatterns`）と、ガネーシャが確認なしで編集できるパス（`plannerWritable`）の追加。ガードと健さんのラッパーが読む。既定の一覧に足すだけで、外すことはできない |
-| `claude/hooks/test-guard-code-edit.mjs` | 全員 | `.claude/hooks/test-guard-code-edit.mjs`。フックの確かめ（`node .claude/hooks/test-guard-code-edit.mjs`）。フックに入力の JSON を流して終了コードを見る。git は呼ばない |
-| `claude/settings.json` | 全員 | `.claude/settings.json`。フックの登録と、git・秘密情報の権限 |
-| `repo-files/gitignore.snippet` | 全員 | 各リポジトリの `.gitignore` に足す行（`.claude/worktrees/`・`docs/tasks/*/codex/`） |
+| `repo-files/gitignore.snippet` | 全員 | 各リポジトリの `.gitignore` に足す行（`.claude/worktrees/`・`docs/tasks/*/codex/`・`docs/tasks/*/code-review/`） |
+
+### このリポジトリで打つチェックコマンド
+
+テンプレートのリポジトリの根で打つ。
+
+```
+node plugins/ai-team/hooks/test-guard-code-edit.mjs
+node plugins/ai-team/hooks/test-session-start.mjs
+node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs
+claude plugin validate .
+claude plugin validate plugins/ai-team
+```
+
+- `claude plugin validate` は、マーケットプレイスとプラグインの形を確かめる。`--strict` は付けない（`version` を書かないので、`--strict` では必ず失敗する）。終了コード 0 で、出ている警告が `version` が無いことだけであること。`claude` が PATH に無ければ、VS Code の拡張の `claude.exe` を使う
 
 ### `ai-team.json` の書き方
 
-リポジトリごとの違いのうち、フックと健さんのラッパーが読むものは、`.claude/ai-team.json`（このリポジトリでは `claude/ai-team.json`）に書く。フックやラッパーのコードは書き換えない。
+リポジトリごとの違いのうち、フックと健さんのラッパーが読むものは、`.claude/ai-team.json`（テンプレートのリポジトリでは `repo-files/claude/ai-team.json`）に書く。フックやラッパーのコードは書き換えない。
 
 ```json
 {
@@ -62,19 +88,20 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 ## ファイルの分け方
 
 - **CLAUDE.md**：リポジトリの説明（構成、ビルド方法、テーマ・プラグイン情報など）。先頭で `@docs/team/Ganesha.md` を取り込む
-- **docs/team/common-rules.md**：共通規約・チェックコマンド・レビューの観点・計画の書き方。ガネーシャは取り込みで、メジェドと adversary は作業の最初に Read で読む
+- **docs/team/common-rules.md**：このリポジトリ固有の決まり（コーディング・チェックコマンド・レビューの観点・計画の書き方）。ガネーシャは取り込みで、メジェドと adversary は作業の最初に Read で読む
 - **docs/team/Ganesha.md**：ガネーシャの役割・キャラ設定・禁止事項
-- **docs/team/workflow.md**：作業の流れの正本。取り込みには入れず、スキル・メジェド・adversary が作業の最初に Read で読む
-- **.claude/agents/mejed.md**：メジェドの役割・キャラ設定・禁止事項（メジェドの定義はここだけ）
-- **.claude/agents/adversary.md**：壊しに来る役の問い・報告の形式・禁止事項。キャラ設定は持たない
-- **スキル**：計画・実装の依頼・レビューの手順とテンプレート
-- **フック＋settings.json**：編集できる範囲と git の権限
+- **プラグインの docs/team-rules.md**：チーム共通の決まり。ガネーシャにはセッションの始めにフックで入り、メジェドと adversary は作業の最初に Read で読む
+- **プラグインの docs/workflow.md**：作業の流れの正本。取り込みには入れず、スキル・メジェド・adversary が作業の最初に Read で読む
+- **プラグインの agents/mejed.md**：メジェドの役割・キャラ設定・禁止事項（メジェドの定義はここだけ）
+- **プラグインの agents/adversary.md**：壊しに来る役の問い・報告の形式・禁止事項。キャラ設定は持たない
+- **スキル**：計画・実装の依頼・レビューの手順とテンプレート（プラグインの中）
+- **フック（プラグインの hooks/hooks.json）＋ settings.json**：編集できる範囲はフック、git の権限は settings.json
 
 ## 編集できる範囲（フックで判定）
 
 判定は上から順に当てて、当たったところで決まる。`.claude/worktrees/<名前>/` の頭は、剥がせなくなるまで繰り返し剥がしてから当てる（秘密情報だけは、剥がす前のパスにも当てる）。
 
-| # | 当たるパス | ガネーシャ | メジェド（mejed） | ほかのサブエージェント |
+| # | 当たるパス | ガネーシャ | メジェド（mejed・ai-team:mejed） | ほかのサブエージェント |
 | --- | --- | --- | --- | --- |
 | 1 | `.claude/ai-team.json`（設定ファイル自体）。中身が壊れていても、`secretPatterns` が当たっても、誰も確認。ただし、設定ファイルがリンクのとき（リンク先があってもなくても）は、この行に当てず、下の行で判定する（リンク先が秘密情報なら×）。設定ファイルか親の `.claude/` がリンク切れのときは、この行も含めて全部止める（×） | 確認 | 確認 | 確認 |
 | 2 | リポジトリの外（`~/.claude/projects/<p>/memory/`・`~/.claude/plans/`・`<一時ディレクトリ>/claude/` を除く） | × | × | × |
@@ -94,7 +121,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 - Windows のファイルシステムは大文字小文字を区別しないので、Windows ではパスを小文字にそろえてから照合する（`.DEV.VARS` も止まる）
 - 判定は「指定されたパス」と「シンボリックリンク（ジャンクションを含む）をたどった実体のパス」の両方に当てる。リンク経由で秘密情報・コード・リポジトリの外を書き換えることはできない。2つの判定が違うときは、きつい方（止める > 確認 > 通す）を取る
 - 4 は、メインのチェックアウトでは Claude Code の protected paths（`.claude/` の下への書き込みを自動では通さない仕組み）と重なる。`.claude/worktrees/` の下は protected paths の例外で守られないので、worktree の中の `.claude/`（スキル・エージェント・フック）を守るのが目的。auto モードで、フックの確認と protected paths の分類器のどちらが先に効くかは、確かめていない
-- 5 は、共通規約・作業の流れ・Ganesha.md を、ガネーシャが確認なしで書き換えられないようにするため。6 は、メジェドが計画書を書き換えられないようにするため
+- 5 は、固有の規約・Ganesha.md を、ガネーシャが確認なしで書き換えられないようにするため（チーム共通の決まりと作業の流れはプラグインにあり、リポジトリの外のキャッシュなので、リポジトリの編集の判定には当たらない）。6 は、メジェドが計画書を書き換えられないようにするため
 - `.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` は、コードではない設定なので、ガネーシャが編集できる（各リポジトリへの反映で `.gitignore` に `.claude/worktrees/` を足すのに要る）
 - `~/.claude/` は丸ごと通さない。ユーザー共通の settings.json・CLAUDE.md・スキル・認証情報が入っているので、メモリと計画ファイルの2か所だけにする
 
@@ -138,13 +165,13 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 5. マージ：まーちゅう
 6. マージの後：「マージした」→ ガネーシャが既定ブランチを origin に追いつかせる（`delegate-to-mejed` の「マージの後」）
 
-小さな文書の直し（「この README の誤字を直して。簡単な修正の道で」のような頼み方）は、計画・メジェド・diff-reviewer を通さず、まーちゅうの OK を取ってガネーシャが直し、PR の前のレビュー役（健さんの review か `/code-review`）だけを通す。範囲と流れは [repo-files/docs/team/workflow.md](repo-files/docs/team/workflow.md) の「簡単な修正の道」を見る。
+小さな文書の直し（「この README の誤字を直して。簡単な修正の道で」のような頼み方）は、計画・メジェド・diff-reviewer を通さず、まーちゅうの OK を取ってガネーシャが直し、PR の前のレビュー役（健さんの review か `/code-review`）だけを通す。範囲と流れは [plugins/ai-team/docs/workflow.md](plugins/ai-team/docs/workflow.md) の「簡単な修正の道」を見る。
 
 GitHub Projects のボードを使うなら、ユーザー側の手順で動かす（このテンプレートは持たない）。
 
 ### 作業の流れ（要約）
 
-計画から PR までの細かい分かれ目（フローチャート）・言葉の決まり・回数の上限の**正本は [repo-files/docs/team/workflow.md](repo-files/docs/team/workflow.md)**。各リポジトリには `docs/team/workflow.md` として配る。スキル・メジェド・adversary は、作業の最初にこれを Read で読む。
+計画から PR までの細かい分かれ目（フローチャート）・言葉の決まり・回数の上限の**正本は [plugins/ai-team/docs/workflow.md](plugins/ai-team/docs/workflow.md)**。プラグインで配る。スキル・メジェド・adversary は、作業の最初にこれを Read で読む。
 
 - 計画：書いたら Fable（adversary・plan）に壊しに来させる（1つの計画につき1回）。その後は健さんに、採る指摘が0になるまで頼む（最大5回）（レビューの道で、Fable の代わりに `/code-review` を1回、健さんの代わりに `/code-review` を最大5回にできる）
 - 実装：メジェドの報告を受けるたびに、停止なら保留、「途中で2回以上落ちたチェック」があればレビュー役（健さんの consult か `/code-review`。PR の前の道に合わせる）
@@ -164,21 +191,45 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ## 導入方法
 
-1. テンプレートの写す版を先に決める。最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを写す版として書き留める。その版の中身（`git show` などで読む）から写す。詳しいやり方は「テンプレートを直した後の反映」の「写す版を決める」を参照（作業の途中でテンプレートが進んでも、その版のまま反映するため）
-2. `claude/` の中身をリポジトリの `.claude/` に重ねる（既存の `settings.json` があれば、内容を見比べて置き換える。`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない。既存の `ai-team.json` があれば、足したパターンを消さないよう、中身を残す）
-3. `repo-files/docs/team/` をリポジトリの `docs/team/` に置き（common-rules.md・Ganesha.md・workflow.md の3つが入る）、`CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
-4. `common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。同じ common-rules.md の「レビューの観点」と「計画の書き方」も、案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す
-5. 案件に合わせて `.claude/ai-team.json` の `secretPatterns` に足す（フックとラッパーはこれを読む。settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条も、同じにそろえる。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
-6. 健さん（Codex）を使うなら
+プラグインは PC ごと・リポジトリごとに入れる（`enabledPlugins` をコミットしただけでは入らない）。
+
+1. Claude Code に、マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。private のリポジトリなので、gh の認証（`gh auth login` と `gh auth setup-git`）が要る
+2. リポジトリに `repo-files/` の中身を置く
+   - `repo-files/claude/` → `.claude/`（settings.json・ai-team.json）。既存の `settings.json` があれば、内容を見比べて置き換える（`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）。既存の `ai-team.json` があれば、足したパターンを消さないよう、中身を残す
+   - `repo-files/docs/team/` → `docs/team/`（common-rules.md・Ganesha.md の2つが入る）
+   - `repo-files/CLAUDE.md.snippet` の中身を `CLAUDE.md` の先頭に足す
+   - `repo-files/gitignore.snippet` の行を、リポジトリの `.gitignore` に足す（健さんを使うかどうかに関係なく。`.claude/worktrees/` は worktree の置き場所。`docs/tasks/*/codex/` は健さんの返事の保存先、`docs/tasks/*/code-review/` は `/code-review` の結果の保存先）
+3. 入れるリポジトリの根で、プラグインを入れる（リポジトリごとに1回）：`claude plugin install ai-team@ai-team-skills --scope project`
+   - **手順2で settings.json を置いた後に打つ。** install が `.claude/settings.json` に `enabledPlugins` を書くので、先に打つと、settings.json を写したときに消える
+   - **`--scope` を付けずに（user で）入れない。** その PC の全部のリポジトリで、ガードと SessionStart が動いてしまう
+4. `docs/team/common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。同じファイルの「レビューの観点」と「計画の書き方」も、案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す。案件に合わせて `.claude/ai-team.json` の `secretPatterns` に足す（フックとラッパーはこれを読む。settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` に、案件の秘密情報の箇条を足して、同じにそろえる（team-rules.md はプラグインの中で、全リポジトリ共通・更新で上書きされるので、案件ごとには直さない）。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
+5. 健さん（Codex）を使うなら
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
    - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
-   - `docs/tasks/*/codex/` は健さんの返事の保存先で、Git に入れない（次の手順 7 の snippet に入っている）
-7. `repo-files/gitignore.snippet` の行を、リポジトリの `.gitignore` に足す（健さんを使うかどうかに関係なく。`.claude/worktrees/` は worktree の置き場所。`docs/tasks/*/code-review/` は `/code-review` の結果の保存先）
-8. 導入の PR を作るときは、PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）
+6. VS Code を閉じて開き直す（ウィンドウの再読み込みでは読み込まれない）
+7. 導入の PR を作るときは、PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）。写す版は、最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを書き留めて決める。その版の中身（`git show` などで読む）から写す（「テンプレートを直した後の反映」の「写す版を決める」）
+
+## 外し方
+
+外すリポジトリの根で、`claude plugin uninstall ai-team@ai-team-skills --scope project`（入れたときと同じスコープ。付けないと user のスコープを探す）。
+
+その PC のどのリポジトリでも使わなくなったときだけ、`claude plugin marketplace remove ai-team-skills` と、キャッシュの `<ユーザーのホーム>/.claude/plugins/cache/ai-team-skills/` を手で消す（マーケットプレイスとキャッシュは PC で1つで、ほかのリポジトリも使っているため）。
 
 ## テンプレートを直した後の反映
 
-テンプレートに直しが入ったときは、各リポジトリのセッションで反映させる。そのリポジトリのフックと権限が効くため。頼み方の例：「rocket-martue/ai-team-skills の最新を反映して」（反映のイシューがあれば、その番号も）。
+テンプレートに直しが入ったときは、プラグインの中身と、リポジトリ側（`repo-files/` の中身）で、反映のしかたが違う。
+
+### プラグインの中身（`plugins/ai-team/`）の反映
+
+写さない。各 PC で、次の順に打つ。
+
+1. `claude plugin marketplace update ai-team-skills`（PC ごとに1回）
+2. プラグインを入れた各リポジトリの根で、`claude plugin update ai-team@ai-team-skills --scope project`（入れたときと同じスコープ。スコープを省くと、今いるプロジェクトの中から探すので、入れていないリポジトリで打つと見つからない）
+3. VS Code を閉じて開き直す
+
+### リポジトリ側（`repo-files/` の中身）の反映
+
+各リポジトリのセッションで反映させる。そのリポジトリのフックと権限が効くため。頼み方の例：「rocket-martue/ai-team-skills の最新を反映して」（反映のイシューがあれば、その番号も）。以降の節（前回の版を探す〜マージの後）が、この手順。settings.json の `enabledPlugins` は、テンプレートに無いが消さない（install が書いたもの）。
 
 ### 前回の版を探す
 
@@ -194,13 +245,13 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 ### 差分を見る
 
 テンプレートの `git log <前回の版>..<写す版>` と `git diff <前回の版> <写す版>` を、次の範囲に絞って見る：
-- `claude/`
+- `repo-files/claude/`
 - `repo-files/docs/team/`
 - `repo-files/gitignore.snippet`
 - `repo-files/CLAUDE.md.snippet`
 - `repo-files/codex/AGENTS.md`
 
-置き場所の対応は「導入方法」のとおり（`claude/` → `.claude/`、`repo-files/docs/team/` → `docs/team/`）。
+置き場所の対応は「導入方法」のとおり（`repo-files/claude/` → `.claude/`、`repo-files/docs/team/` → `docs/team/`）。プラグインの中身（`plugins/ai-team/`）は写さないので、この差分には入れない。
 
 前回の版が分からないとき（前回の全体の反映の PR の題名に版が無いなど）は、差分ではなく、写す版のファイル全体と、そのリポジトリのファイルを見比べる（最初の導入と同じ）。
 
@@ -226,7 +277,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ふつうのタスクと同じ（plan-writer → メジェド → diff-reviewer → PR の前のレビュー役 → PR）。ただし、テンプレートでレビュー済みの変更を写すのが中心なので、承認前の1つ目は省く（レビューの道の1つ目に「省く（反映）」と書く）。ほかは workflow.md どおり（承認前の2つ目（健さんの consult か `/code-review`。レビューの道）、チェックが2回以上落ちたとき・PR の前のレビュー役（健さんか `/code-review`））。まーちゅうに頼まれたら1つ目も回す。
 
-- 反映のセッションでは、スキル・メジェドの定義は変える前のまま動く（`.claude/` はセッションの開始時に読まれるため）。反映で mejed.md の報告の形式を変えても、そのセッションのメジェドの報告は前の形式で返ってくるので、前の版で受ける
+- 反映のセッションでは、スキル・メジェドの定義は変える前のまま動く（`.claude/` とプラグインはセッションの開始時に読まれるため）。反映で mejed.md の報告の形式を変えても、そのセッションのメジェドの報告は前の形式で返ってくるので、前の版で受ける
 - `.claude/settings.json` が変わる反映では、最初から auto モードを外しておく。auto モードだと、メジェドが settings.json を書き換えるのが権限の分類器に Self-Modification で拒否され、確認のダイアログも出ない
 
 ### PR の題名
@@ -239,15 +290,15 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ### マージの後
 
-そのリポジトリのメインのチェックアウトを追いつかせ、そのリポジトリのウィンドウを再読み込みする（`.claude/` はセッションの開始時に読まれるため）。
+そのリポジトリのメインのチェックアウトを追いつかせ、VS Code を閉じて開き直す（`.claude/` とプラグインはセッションの開始時に読まれるため）。
 
 ## 導入後に確認すること
 
-- **取り込みが効くか**：`/memory` を開き、Ganesha.md と common-rules.md が読み込まれているか確認する
+- **取り込みが効くか**：`/memory` を開き、Ganesha.md と common-rules.md が読み込まれているか確認する。チーム共通の決まり（team-rules.md）は取り込みではなく SessionStart フックで入るので、ガネーシャに「チーム共通の決まりの場所は？」と聞いて、プラグインの docs/team-rules.md の絶対パスが答えに出るか確かめる
 - **フックが動くか**：ガネーシャに「inc/ の PHP を1行直して」と頼み、フックで止められるか確認する。次にメジェドに同じことを頼み、通るか確認する。ガネーシャがメモリに書けることも確かめる
-- **Windows での実行**：フックは、シェルを通さない書き方（`"command": "node"` と `"args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-code-edit.mjs"]`）で登録している。Git Bash が無い Windows では、シェル形のコマンドが PowerShell で動いて `$CLAUDE_PROJECT_DIR` が空になり、フックが起動しないまま編集が通るため（起動できないフックは止める側に倒れない。公式ドキュメント hooks の「Exec form and shell form」）。止まらないときは `/hooks` で登録を確認する
-- **フックの単体確認**：フックに JSON を標準入力で渡して終了コードを見る（`CLAUDE_PROJECT_DIR` に仮のリポジトリのパスを入れる）。期待値は、メインの `src/a.js` が 2、メインの `docs/tasks/x/plan.md` が 0、`agent_type: mejed` の `src/a.js` が 0、`agent_type: mejed` の `.dev.vars` が 2、ほかのサブエージェントの `src/a.js` が 2、メインのメモリ（`~/.claude/projects/<p>/memory/`）が 0、リポジトリの外が 2、JSON でない入力が 2。`.claude/` の下と `docs/team/` の下は終了コード 0 で、標準出力の JSON に `permissionDecision: "ask"` が入る
+- **Windows での実行**：フックは、シェルを通さない書き方（プラグインの `hooks/hooks.json` の `"command": "node"` と `"args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs"]`）で登録している。Git Bash が無い Windows では、シェル形のコマンドが PowerShell で動いて変数が空になり、フックが起動しないまま編集が通るため（起動できないフックは止める側に倒れない。公式ドキュメント hooks の「Exec form and shell form」）。止まらないときは `/hooks` で登録を確認する
+- **フックの単体確認**：フック（`node plugins/ai-team/hooks/test-guard-code-edit.mjs` が同じことを確かめる）に JSON を標準入力で渡して終了コードを見る（`CLAUDE_PROJECT_DIR` に仮のリポジトリのパスを入れる）。期待値は、メインの `src/a.js` が 2、メインの `docs/tasks/x/plan.md` が 0、`agent_type: ai-team:mejed`（切り替える前のリポジトリでは `mejed`）の `src/a.js` が 0、同じ `.dev.vars` が 2、ほかのサブエージェントの `src/a.js` が 2、メインのメモリ（`~/.claude/projects/<p>/memory/`）が 0、リポジトリの外が 2、JSON でない入力が 2。`.claude/` の下と `docs/team/` の下は終了コード 0 で、標準出力の JSON に `permissionDecision: "ask"` が入る
 - **Bash・PowerShell 経由の書き込みは止まらない**：`echo > file` や `sed -i`、PowerShell の `Set-Content` のようなシェル経由の書き込みは、このフックの対象外。
   **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
-- **秘密情報**：案件に応じて、パターンを追加する（`.claude/ai-team.json` の `secretPatterns`・settings.json の `Read(...)` の deny・common-rules.md の秘密情報の箇条を、同じにそろえる。既定の4つは `ai-team-config.mjs` の `SECRET_PATTERNS` にあり、設定ファイルでは外せない。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
+- **秘密情報**：案件に応じて、パターンを追加する（`.claude/ai-team.json` の `secretPatterns`・settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` の案件の秘密情報の箇条を、同じにそろえる。team-rules.md はプラグインの中なので直さない。既定の4つは `ai-team-config.mjs` の `SECRET_PATTERNS` にあり、設定ファイルでは外せない。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）

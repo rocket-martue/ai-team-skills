@@ -5,7 +5,7 @@ argument-hint: "[consult|review|image] <依頼>"
 allowed-tools:
   - Read
   - Write
-  - Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1:*)
+  - Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" *)
 ---
 
 # codex（健さんに頼む）
@@ -31,7 +31,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
 3. リポジトリの根から、Bash ツールで次の文字列で呼ぶ（allow に入っているのはこの形だけ）
 
    ```
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/skills/codex/scripts/invoke-codex.ps1 -Mode <consult|review|image> -Task <タスク名> [-PromptFile <一時ファイル>] [-Image "<画像1>|<画像2>"] [-Base <基準ブランチ>]
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" -Mode <consult|review|image> -Task <タスク名> [-PromptFile <一時ファイル>] [-Image "<画像1>|<画像2>"] [-Base <基準ブランチ>]
    ```
 
    - worktree（`.claude/worktrees/<名前>`）で作業しているときは、`-WorkingDirectory <パス>`（リポジトリの根からの相対パス）を付ける。健さんはそのパスを作業の根にして読む
@@ -54,7 +54,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
   - モードと目的
   - **秘密情報のファイルを開かないこと**。AGENTS.md と同じ決まりで書く
     - 既定の4つ（`.env*`・`.dev.vars`・`.kv/`・`wp-config.php`）
-    - 読むリポジトリごとに、その根（git の根）の `.claude/ai-team.json`（無ければ `claude/ai-team.json`）の `secretPatterns` と、根の `.claude/hooks/ai-team-config.mjs`（無ければ `claude/hooks/ai-team-config.mjs`）の秘密情報の既定の一覧と、反映前のリポジトリでは根の `.claude/hooks/guard-code-edit.mjs` の `SECRET_PATTERNS` に当たるもの（設定ファイルとフックのファイルは読んでよい）
+    - 読むリポジトリごとに、その根（git の根）の `.claude/ai-team.json`（無ければ `repo-files/claude/ai-team.json`。テンプレートのリポジトリ）の `secretPatterns` に当たるもの（設定ファイルは読んでよい）。プラグインに切り替える前のリポジトリでは、根の `.claude/hooks/ai-team-config.mjs` の秘密情報の既定の一覧と、根の `.claude/hooks/guard-code-edit.mjs` の `SECRET_PATTERNS` にも当たるもの（フックのファイルも読んでよい）
       - `secretPatterns` はグロブ（`**` は `/` をまたいで0文字以上、`*` は `/` 以外の0文字以上、`?` は `/` 以外の1文字。ほかの文字はそのまま。`**/` は先頭でも途中でも区切りごと省けて0個以上のディレクトリに当たり、最後の `/**` も区切りごと省けて、そのもの自身とその中に当たる。例：`**/.wrangler/**` は、根の直下の `.wrangler` と `.wrangler/state.json` にも、`a/.wrangler/x` にも当たる。`private/**/token.json` は `private/token.json` にも `private/a/b/token.json` にも当たる）で、リポジトリの根からの相対パスに当てる
     - worktree のときは、メインのチェックアウトの根の設定ファイルとフックも合わせて見る
     - 照らし方はフックに従う
@@ -73,10 +73,11 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
 
 ## 壊しに来る役を頼むとき
 
-ガネーシャが `consult` で頼む。頼みの文は adversary の定義（`.claude/agents/adversary.md`）と同じ中身にする。自分の結論や見立ては渡さない（先入観を移さないため）。上限と分かれ目は `docs/team/workflow.md`。
+ガネーシャが `consult` で頼む。頼みの文は adversary の定義（プラグインの `agents/adversary.md`）と同じ中身にする。自分の結論や見立ては渡さない（先入観を移さないため）。上限と分かれ目は workflow.md。
 
 - **計画のレビュー**（承認前）
-  - 計画書のパス、`docs/team/common-rules.md` と `docs/team/workflow.md` の場所
+  - 計画書のパス、リポジトリの `docs/team/common-rules.md`、チーム共通の決まり `${CLAUDE_PLUGIN_ROOT}/docs/team-rules.md` と作業の流れ `${CLAUDE_PLUGIN_ROOT}/docs/workflow.md` の場所（スキルとして読み込むと絶対パスになる。健さんは作業の根の外のファイルも読める）
+  - 答えの場所の書き方：リポジトリの外のプラグインの文書は `<プラグイン>/docs/workflow.md:NN` の形で書くよう頼む（AGENTS.md の「絶対パスを書かない」と合わせる）
   - 見てほしいこと：外との約束（ほかのリポジトリ・API・データの形・ファイル名）・完了条件の判定・対象外・計画の中の食い違い
   - 報告の形式：指摘ごとに重要度・場所・壊れ方・根拠。見つからなければ1行目に「指摘なし」
   - 「承認前の確認」の節は判断に使わないこと
@@ -92,7 +93,7 @@ adversary（Fable）はこのスキルを使わない（計画書だけを読む
 - `codex` が PATH に無ければ、入れ方を出して止まる（`save-code-review` と `make-patch` を除く。codex に何も渡さないため）
 - sandbox は常に `read-only`。`implement` に当たる呼び方（`workspace-write` など）はしない
 - 健さんは read-only の sandbox で動くので、一時ディレクトリにも書けず、テストを走らせられない。書ける場所を足す permissions profile も試したが、codex-cli 0.160.0 の Windows の sandbox では、健さんがファイルを読む道具が動かなくなったので使わない（#36）。テストの結果は、メジェドとガネーシャがチェックコマンドで取ったものを使う。健さんには、テストのコードを読ませる（AGENTS.md の決まり）
-- 秘密情報の照らし合わせは、ガードと同じ共有モジュール（`.claude/hooks/ai-team-config.mjs`）を `node` で呼んで行う。既定の4つに、作業の根とメインのチェックアウトの根の `.claude/ai-team.json`（無ければ `claude/ai-team.json`）の `secretPatterns` を足したもの。設定ファイルが壊れていれば（知らないキーやリンク切れも含む）、どのモードでも呼ばずに止まる。`node` が無ければ止まる（どちらも `save-code-review` を除く。codex に何も渡さないため）
+- 秘密情報の照らし合わせは、ガードと同じ共有モジュール（プラグインの `hooks/ai-team-config.mjs`）を `node` で呼んで行う。既定の4つに、作業の根とメインのチェックアウトの根の `.claude/ai-team.json`（無ければ `repo-files/claude/ai-team.json`。テンプレートのリポジトリ）の `secretPatterns` を足したもの。設定ファイルが壊れていれば（知らないキーやリンク切れも含む）、どのモードでも呼ばずに止まる。`node` が無ければ止まる（どちらも `save-code-review` を除く。codex に何も渡さないため）
 - `review`：呼ぶ前に、健さんに渡る変更のすべてのパスを秘密情報のパターンと照らし、1つでも当たれば呼ばずに止まる。見るのは `git status --porcelain -z -uall` のすべての項目（未追跡・ステージ済み・書き換え・名前の変更は元の名前も）と、`-Base` のときは `git diff --name-only --no-renames -z <基準ブランチ>...HEAD` のパス（`--uncommitted` も `--base` も、これらを Codex に送るため）。`-Base` の基準ブランチが無く `git diff` が失敗したときも止まる
 - `image`：参照画像を空の一時ディレクトリに `ref-1.png` のような名前でコピーし、そこを作業の根にして呼ぶ（リポジトリには触れない。Codex の `-i` はカンマで値を分けるので、元の名前は渡さない）。答えの `IMAGE_PATH:` の行の画像が、生成画像の保存先（`<CODEX_HOME>/generated_images/`）の下にあり、今回渡した参照画像と別のファイルなら、`IMAGE:` の行で出す。そうでなければ終了コード 2 で止まる（文章から正規表現でパスを探さない。空白・UNC・アポストロフィで取りこぼすため。時刻でも探さない。同時に別の Codex が作った画像を取り違えるため）
 - 返事を `docs/tasks/<タスク名>/codex/<連番>-<モード>.md` に保存する（`.gitignore` で Git に入れない）。worktree から呼んでも、保存先は**メインのチェックアウト**（`git worktree list` の1件目）の下になる（写す手順は要らない）。求められなければ作業の根の下。ただし、保存先が `.gitignore` で無視されていないとき（テンプレートを反映していないリポジトリなど）は、リポジトリに未追跡のファイルを残さないため、`<一時ディレクトリ>/codex-replies/<リポジトリのフォルダ名>-<パスから作った8文字>/<タスク名>/` に保存し、`SAVED:` の行は絶対パスになる（標準エラーに知らせも出る）。無視されているかは、実際に保存する名前（`<連番>-<モード>.md`）で `git check-ignore` を打って確かめる。一時ディレクトリに溜まった返事は、手で消してよい（`codex-replies` のフォルダ。溜まっても動きは壊れない）

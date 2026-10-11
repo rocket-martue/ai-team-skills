@@ -15,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 // 先頭で固定しない（`(^|/)`）。worktree の中（.claude/worktrees/<名前>/.dev.vars）でも当たるようにする。
 export const SECRET_PATTERNS = [/(^|\/)\.dev\.vars$/, /(^|\/)\.kv\//, /(^|\/)wp-config\.php$/, /(^|\/)\.env[^/]*$/];
 
-// 設定ファイルの、リポジトリの根からの相対パス（候補の順。テンプレートのリポジトリは claude/ai-team.json）
-export const CONFIG_CANDIDATES = ['.claude/ai-team.json', 'claude/ai-team.json'];
+// 設定ファイルの、リポジトリの根からの相対パス（候補の順。テンプレートのリポジトリは repo-files/claude/ai-team.json）
+export const CONFIG_CANDIDATES = ['.claude/ai-team.json', 'repo-files/claude/ai-team.json'];
 
 // 確かめが済んだときに --out の1行目へ書く印（ラッパーが読む）
 export const OK_MARK = 'ai-team-config: ok';
