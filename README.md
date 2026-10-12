@@ -211,9 +211,20 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ## 外し方
 
-外すリポジトリの根で、`claude plugin uninstall ai-team@ai-team-skills --scope project`（入れたときと同じスコープ。付けないと user のスコープを探す）。
+**プラグインが動いているうちに**、リポジトリ側を先に片付けてマージし、最後に手元のプラグインを外す。先に外すと、メインのチェックアウトに `.claude/ai-team.json` などの目印が残ったまま ai-team のスキルが呼べなくなり、gh-* が止まるため（目印を見るのはメインのチェックアウト）。
 
-その PC のどのリポジトリでも使わなくなったときだけ、`claude plugin marketplace remove ai-team-skills` と、キャッシュの `<ユーザーのホーム>/.claude/plugins/cache/ai-team-skills/` を手で消す（マーケットプレイスとキャッシュは PC で1つで、ほかのリポジトリも使っているため）。
+1. 片付けのブランチを worktree に切り（メインのチェックアウトは切り替えない。gh-skills の worktree.md の置き場所）、リポジトリ側のファイルを片付けて PR にする。この PR は、gh-* の gh-issue・gh-pr・gh-review も ai-team の流れ（計画・メジェド）も使わずに作る（gh-* は目印に当たって ai-team の流れに回し、ai-team の流れは外す対象のため）。まーちゅうが手で作るか、ガネーシャに「git と gh を直接打って」と頼む（gh-* の安全装置の `--repo`・`--head` を付け、マージはしない）。
+   - `.claude/settings.json` の `enabledPlugins` から `ai-team@ai-team-skills` の行を消す（**必ず**。手で消してコミットする。コミットしないと、ほかの PC やクローンで gh-* の目印に当たり続ける）
+   - `.claude/ai-team.json` を消す（**必ず**。導入の手順2で置いたもの。残すと gh-* の目印に当たり続ける。目印は gh-skills の gh-flow の冒頭）
+   - プラグインに切り替える前の写し（`.claude/skills/`・`.claude/agents/`・`.claude/hooks/` の ai-team のもの）が残っていれば消す（**必ず**。`.claude/skills/delegate-to-mejed/` も gh-* の目印のため）。`.claude/settings.json` の `hooks` に古いガード（`${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-code-edit.mjs`）の登録が残っていれば、それも消す（ファイルだけ消すと、無いガードを呼び続けるため）
+   - `CLAUDE.md` の先頭の取り込み（`CLAUDE.md.snippet` で足した行）と `docs/team/Ganesha.md` を消す（**必ず**。Ganesha.md は、計画・実装・PR・レビューを ai-team のスキルで行うよう指示し続けるため）
+   - `docs/team/common-rules.md` と `docs/tasks/` の記録は、残してもよい（取り込まなければ効かない）
+   - `.claude/settings.json` の permissions は、導入のときに置き換えた分を見直す（ai-team の allow・ask・deny を、そのリポジトリに要るものだけにする）
+   - `.gitignore` に足した行（`gitignore.snippet`）は、残しても害は無い
+2. PR をマージしたら、メインのチェックアウトを origin に追いつかせる。`git status --short --branch` で既定のブランチにいて未コミットの変更が無いことを確かめ、`git pull --ff-only origin <既定ブランチ>` を打ち、もう一度 `git status --short --branch` で ahead・behind が無いことを確かめる（違えば止まる）。追いついた後は目印が無いので、片付けの worktree とブランチは gh-wrapup で（ふつうのリポジトリとして）片付けてよい
+3. プラグインを入れた**PC ごとに**、メインのチェックアウトの根で `claude plugin uninstall ai-team@ai-team-skills --scope project`（入れたときと同じスコープ。付けないと user のスコープを探す。打たない PC では、入れた記録が残り、プラグインが動き続けることがある）。シェルのコマンドで外す（`/plugin` や VS Code の画面で「Disable for me」を選ぶと、`.claude/settings.local.json` に `false` を書くだけで、入れた記録が残るため）。`enabledPlugins` の行は手順1で消してあるので、uninstall の後に `git status` で `.claude/settings.json` に差分が出ていないかを見る（出ていたら中身を見て、要るならコミットする）。`claude plugin list` で、このリポジトリに ai-team が無いことを確かめる。`enabledPlugins` の行が無いために uninstall が「Failed to uninstall plugin」で止まり、`claude plugin list` に ai-team が残るときは、まだ確かめていない（#34 の 3 で確かめる）。そのときは止まって、まーちゅうが扱いを決める
+4. VS Code を閉じて開き直す
+5. その PC のどのリポジトリでも使わなくなったときだけ、`claude plugin marketplace remove ai-team-skills` と、キャッシュの `<ユーザーのホーム>/.claude/plugins/cache/ai-team-skills/` を手で消す（マーケットプレイスとキャッシュは PC で1つで、ほかのリポジトリも使っているため）。
 
 ## テンプレートを直した後の反映
 
