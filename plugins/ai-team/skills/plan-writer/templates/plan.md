@@ -8,7 +8,7 @@
 - イシュー：`Closes #<番号>` <!-- PR 本文の頭に書く値（バッククォートは付けない）。イシューごとに `Closes #<番号>` か `Refs #<番号>（この PR ではクローズしない。理由）` を `・` でつないで並べる（PR 本文には1行に1つずつ書く。マージの後に確認が残るなら Refs。別のリポジトリのイシューは `owner/repo#<番号>`）。イシューが無いときは「なし」。gh-* のボードの Status が読む -->
 - worktree：`<パス>` <!-- gh-issue で worktree を作ったときの置き場所。ai-team のリポジトリでは、いつもリポジトリの中の `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）。ai-team の目印に当たらないリポジトリ（このテンプレートのリポジトリなど）でリポジトリの外に置いたときだけ「リポジトリの外」と書く（ローカルの絶対パスを書かない。gh-wrapup は `git worktree list` でブランチ名から探す）。使わないときは「なし」。gh-wrapup の片付けが読む -->
 - メジェドのモデル：haiku（既定）／sonnet <!-- 選び方は plan-writer の「書き方の基準」を見る -->
-- レビューの道：承認前は Fable・健さん ／ PR の前は 健さん <!-- 選び方は作業の流れ（プラグイン ai-team の docs/workflow.md）の言葉の決まり「レビューの道」。`/code-review` を選んだ段はレベルも書く（例：`/code-review（medium）`） -->
+- レビューの道：承認前は Fable・健さん ／ PR の前は 健さん ／ PR の後は なし <!-- 選び方は作業の流れ（プラグイン ai-team の docs/workflow.md）の言葉の決まり「レビューの道」。`/code-review` を選んだ段はレベルも書く（例：`/code-review（medium）`）。PR の後は `Fable` か `なし` -->
 - 改訂履歴：
   - YYYY-MM-DD 初版
 
