@@ -67,6 +67,7 @@ claude plugin validate plugins/ai-team
 ```
 
 - `claude plugin validate` は、マーケットプレイスとプラグインの形を確かめる。`--strict` は付けない（`version` を書かないので、`--strict` では必ず失敗する）。終了コード 0 で、出ている警告が `version` が無いことだけであること。`claude` が PATH に無ければ、VS Code の拡張の `claude.exe` を使う
+- `claude -p --settings <ファイル>` で試すときは、`enabledPlugins` を含む設定を渡さない（そのプラグインが user スコープに自動で入る）。試しの後は `installed_plugins.json` に user の記録が増えていないか見る
 
 ### `ai-team.json` の書き方
 
@@ -196,9 +197,11 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ## 導入方法
 
-プラグインは PC ごと・リポジトリごとに入れる（`enabledPlugins` をコミットしただけでは入らない）。
+プラグインは PC ごと・リポジトリごとに入れる（`enabledPlugins` をコミットしただけでは入らない）。プラグインに切り替える前のリポジトリ（`.claude/skills/delegate-to-mejed/` などのテンプレートの写しがあるもの）は、この節ではなく「写しからプラグインへの切り替え」の順で進める。
 
-1. Claude Code に、マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。private のリポジトリなので、gh の認証（`gh auth login` と `gh auth setup-git`）が要る
+この節と「外し方」「テンプレートを直した後の反映」の `claude` のコマンドは、`claude` が PATH に無ければ、VS Code の拡張の `claude.exe`（`<ユーザーのホーム>/.vscode/extensions/anthropic.claude-code-<版>-<OS>/resources/native-binary/claude.exe`）で打つ。
+
+1. Claude Code に、マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。private のリポジトリなので、HTTPS で取れる認証が要る（`git ls-remote https://github.com/rocket-martue/ai-team-skills.git` が通れば足りる。通らなければ `gh auth login` と `gh auth setup-git`）。マーケットプレイスはユーザーの設定に書かれる（「declared in user settings」と出る）。外すときは「外し方」の5
 2. リポジトリに `repo-files/` の中身を置く
    - `repo-files/claude/` → `.claude/`（settings.json・ai-team.json）。既存の `settings.json` があれば、内容を見比べて置き換える（`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）。既存の `ai-team.json` があれば、足したパターンを消さないよう、中身を残す
    - `repo-files/docs/team/` → `docs/team/`（common-rules.md・Ganesha.md の2つが入る）
@@ -207,12 +210,29 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 3. 入れるリポジトリの根で、プラグインを入れる（リポジトリごとに1回）：`claude plugin install ai-team@ai-team-skills --scope project`
    - **手順2で settings.json を置いた後に打つ。** install が `.claude/settings.json` に `enabledPlugins` を書くので、先に打つと、settings.json を写したときに消える
    - **`--scope` を付けずに（user で）入れない。** その PC の全部のリポジトリで、ガードと SessionStart が動いてしまう
-4. `docs/team/common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。同じファイルの「レビューの観点」と「計画の書き方」も、案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す。案件に合わせて `.claude/ai-team.json` の `secretPatterns` に足す（フックとラッパーはこれを読む。settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` に、案件の秘密情報の箇条を足して、同じにそろえる（team-rules.md はプラグインの中で、全リポジトリ共通・更新で上書きされるので、案件ごとには直さない）。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
+   - install は `enabledPlugins` を足すほか、`permissions` のキーの順を `allow`・`deny`・`ask` に書き直すことがある（中身と効き方は同じ）。入った版は `<ユーザーのホーム>/.claude/plugins/installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha` で確かめられる
+4. `docs/team/common-rules.md` の「チェックコマンド」を案件に合わせて書き換える。同じファイルの「レビューの観点」と「計画の書き方」も、案件に合わせて書き換える。チェックの前に要る依存のインストール（`composer install`・`npm ci` など）は、リポジトリごとに settings.json の allow に足す。案件に合わせて `.claude/ai-team.json` の `secretPatterns` に足す（フックとラッパーはこれを読む。settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` に、案件の秘密情報の箇条を足して、同じにそろえる（team-rules.md はプラグインの中で、全リポジトリ共通・更新で上書きされるので、案件ごとには直さない）。健さんの AGENTS.md（PC の AGENTS.md がテンプレートの今の版なら）は、読むリポジトリの設定ファイルを見るので直さなくてよい）
 5. 健さん（Codex）を使うなら
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
-   - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば中身を見比べて合わせる
+   - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば、まーちゅうの許可を得て、テンプレートの版と見比べて合わせる。古い形（秘密情報の一覧をリポジトリの `.claude/hooks/guard-code-edit.mjs` の `SECRET_PATTERNS` から取る。`ai-team.json` の文字列が無い）のままだと、`.claude/ai-team.json` の `secretPatterns` を健さんが知らないので、健さんを呼ぶ前に必ず合わせる
 6. VS Code を閉じて開き直す（ウィンドウの再読み込みでは読み込まれない）
 7. 導入の PR を作るときは、PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）。写す版は、最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを書き留めて決める。その版の中身（`git show` などで読む）から写す（「テンプレートを直した後の反映」の「写す版を決める」）
+
+### 写しからプラグインへの切り替え
+
+プラグインに切り替える前のリポジトリ（`.claude/skills/delegate-to-mejed/` などのテンプレートの写しがあるもの）の手順。古い写しを消して、プラグインの入った形にそろえる。例：hub の切り替え（PR rocket-martue/swx-inventory-hub#109）。
+
+1. 写す版を決める（「テンプレートを直した後の反映」の「写す版を決める」：テンプレートを fetch して `origin/main` のコミットを書き留め、その版の中身から写す）。この PC にマーケットプレイスがまだ無ければ入れる（「導入方法」の1。入っていれば `claude plugin marketplace update ai-team-skills`）。PC の健さんの AGENTS.md を合わせる（「導入方法」の5）
+2. auto モードを外してから（auto モードでは `.claude/` の削除や settings.json の書き換えが自分の設定の書き換えとして止められ、確認も出ない）、いつもの流れ（計画 → 承認 → メジェド）で、リポジトリ側を書き換える
+   - `.claude/ai-team.json` を、古い写しを消すより先に置く（gh-* の目印が途切れないため。目印は gh-skills の gh-flow の冒頭）
+   - `docs/team/common-rules.md`・`docs/team/Ganesha.md` は、テンプレートの `repo-files/docs/team/` の版で書き直してから、そのリポジトリの固有の分（チェックコマンド・レビューの観点・計画の書き方・ボードの Status など）を戻す（今の文書に追記するだけだと、消した写しへの参照や古いエージェントの名前が残るため）。秘密情報のパターンは `.claude/ai-team.json` の `secretPatterns` に移す
+   - 古い写し（`.claude/skills/`・`.claude/agents/`・`.claude/hooks/`）と `docs/team/workflow.md` を消す
+   - `.gitignore` を `repo-files/gitignore.snippet` と見比べ、足りない行を足す（無いと、`/code-review` の結果などが所定の記録先に保存されず、一時ディレクトリに回る）
+   - `.claude/settings.json` は、テンプレートの `repo-files/claude/settings.json` に、そのリポジトリの固有の allow・deny（チェックコマンド・デプロイの禁止・秘密情報の Read の禁止など）を残して書き換え、`hooks` の古いガードの登録を消す。settings.json の書き換えは、メジェドではなくガネーシャが、まーちゅうの確認を取って行う
+   - メジェドの報告は、このセッションで delegate-to-mejed の「メジェドの報告の受け方」どおりに受け切る（行が欠けていれば、同じメジェドに書き直させる）。そのうえで、報告の「結果」の行と「途中で2回以上落ちたチェック」の行を、そのまま review.md に書いておく（開き直した後のセッションで、停止の扱いと K2 の要否を決めるため）
+3. 古い写しを消した後は、**そのセッションでは古いスキルも健さんのラッパーも呼べない**（セッションの開始時の写しで動くため）。diff-reviewer・PR の前のレビュー役・K2 は、開き直した後のセッションで行う
+4. settings.json を置いた後に、リポジトリの根で `claude plugin install ai-team@ai-team-skills --scope project`（「導入方法」の手順3と同じ注意）。打った後、開き直す前に、install の差分（install の前の settings.json の写しと比べる）と入った版（`installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`）を見た結果を review.md に書く。入った版が手順1で決めた版と違えば、開き直さずに止まる（リポジトリ側とプラグインの版がずれるため）
+5. VS Code を閉じて開き直し、新しいセッションで「導入後に確認すること」を確かめる。そのあと、review.md に書いておいたメジェドの報告の行で、delegate-to-mejed の「メジェドの報告の受け方」の分け方どおりに K2 が要るかを決め（要るなら diff-reviewer の前に K2）、diff-reviewer・PR の前のレビュー役に進む。PR の題名には、写した版を「（ai-team-skills <版>）」の形で書く（「導入方法」の7と同じ。次の反映の始まりになる）
 
 ## 外し方
 
@@ -242,6 +262,8 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 1. `claude plugin marketplace update ai-team-skills`（PC ごとに1回）
 2. プラグインを入れた各リポジトリの根で、`claude plugin update ai-team@ai-team-skills --scope project`（入れたときと同じスコープ。スコープを省くと、今いるプロジェクトの中から探すので、入れていないリポジトリで打つと見つからない）
 3. VS Code を閉じて開き直す
+
+hub で確かめた（`03bc685` → `f559c20`）。`plugin update` は settings.json を書き換えない。
 
 ### リポジトリ側（`repo-files/` の中身）の反映
 
@@ -302,7 +324,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ### AGENTS.md の扱い
 
-`repo-files/codex/AGENTS.md` が変わっていたら、PR の「マージの後」にその差分を書いて伝える。各 PC の `<CODEX_HOME>/AGENTS.md` は、まーちゅうの許可を得てから、見比べて合わせる（リポジトリの外。個人の設定を上書きしないため。「導入方法」の6と同じ）。
+`repo-files/codex/AGENTS.md` が変わっていたら、PR の「マージの後」にその差分を書いて伝える。各 PC の `<CODEX_HOME>/AGENTS.md` は、まーちゅうの許可を得てから、見比べて合わせる（リポジトリの外。個人の設定を上書きしないため。「導入方法」の5と同じ）。
 
 ### マージの後
 
@@ -310,11 +332,12 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ## 導入後に確認すること
 
-- **取り込みが効くか**：`/memory` を開き、Ganesha.md と common-rules.md が読み込まれているか確認する。チーム共通の決まり（team-rules.md）は取り込みではなく SessionStart フックで入るので、ガネーシャに「チーム共通の決まりの場所は？」と聞いて、プラグインの docs/team-rules.md の絶対パスが答えに出るか確かめる
+- **取り込みが効くか**：ガネーシャに、ファイルを読まずに Ganesha.md と common-rules.md の中身（ボードの Status やチェックコマンドなど、そのリポジトリで書いたもの）を言わせる（VS Code の拡張の Memory の画面は自動メモリしか出さない。ターミナルの CLI なら `/memory` でも見られる）。チーム共通の決まり（team-rules.md）は取り込みではなく SessionStart フックで入るので、ガネーシャに「チーム共通の決まりの場所は？」と聞いて、プラグインの docs/team-rules.md の絶対パスが答えに出るか確かめる
 - **フックが動くか**：ガネーシャに「inc/ の PHP を1行直して」と頼み、フックで止められるか確認する。次にメジェドに同じことを頼み、通るか確認する。ガネーシャがメモリに書けることも確かめる
 - **Windows での実行**：フックは、シェルを通さない書き方（プラグインの `hooks/hooks.json` の `"command": "node"` と `"args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs"]`）で登録している。Git Bash が無い Windows では、シェル形のコマンドが PowerShell で動いて変数が空になり、フックが起動しないまま編集が通るため（起動できないフックは止める側に倒れない。公式ドキュメント hooks の「Exec form and shell form」）。止まらないときは `/hooks` で登録を確認する
 - **フックの単体確認**：フック（`node plugins/ai-team/hooks/test-guard-code-edit.mjs` が同じことを確かめる）に JSON を標準入力で渡して終了コードを見る（`CLAUDE_PROJECT_DIR` に仮のリポジトリのパスを入れる）。期待値は、メインの `src/a.js` が 2、メインの `docs/tasks/x/plan.md` が 0、`agent_type: ai-team:mejed`（切り替える前のリポジトリでは `mejed`）の `src/a.js` が 0、同じ `.dev.vars` が 2、ほかのサブエージェントの `src/a.js` が 2、メインのメモリ（`~/.claude/projects/<p>/memory/`）が 0、リポジトリの外が 2、JSON でない入力が 2。`.claude/` の下と `docs/team/` の下は終了コード 0 で、標準出力の JSON に `permissionDecision: "ask"` が入る
 - **Bash・PowerShell 経由の書き込みは止まらない**：`echo > file` や `sed -i`、PowerShell の `Set-Content` のようなシェル経由の書き込みは、このフックの対象外。
   **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
-- **秘密情報**：案件に応じて、パターンを追加する（`.claude/ai-team.json` の `secretPatterns`・settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` の案件の秘密情報の箇条を、同じにそろえる。team-rules.md はプラグインの中なので直さない。既定の4つは `ai-team-config.mjs` の `SECRET_PATTERNS` にあり、設定ファイルでは外せない。健さんの AGENTS.md は、読むリポジトリの設定ファイルを見るので直さなくてよい）
+- **秘密情報**：案件に応じて、パターンを追加する（`.claude/ai-team.json` の `secretPatterns`・settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` の案件の秘密情報の箇条を、同じにそろえる。team-rules.md はプラグインの中なので直さない。既定の4つは `ai-team-config.mjs` の `SECRET_PATTERNS` にあり、設定ファイルでは外せない。健さんの AGENTS.md（PC の AGENTS.md がテンプレートの今の版なら）は、読むリポジトリの設定ファイルを見るので直さなくてよい）
+- **ラッパーの確認**：VS Code のセッションでは、プラグインのキャッシュのラッパーを打つと、settings.json の allow があっても確認が出る（`claude -p` では出ない。原因は #57 で調べ中）。出たら「一度だけ許可」で通してよい。「常に許可」は、#57 で決めるまで選ばない（`.claude/settings.local.json` に決まりが書かれるため）
