@@ -19,18 +19,21 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { isValidSessionId, markDir, markPath, MARK_TTL_MS } from './ai-team-config.mjs';
+import { isValidSessionId, markDir, markPath, MARK_FUTURE_MS } from './ai-team-config.mjs';
 
 // 付ける言い方・消す言い方。空白（半角・全角・改行）を除いた文に入っているかで見る。
 const ATTACH_PHRASES = ['ガネーシャが直接コード書いて', 'ガネーシャが直接直して'];
 const DETACH_PHRASES = ['直接書くのはおしまい'];
+
+// ほかのセッションの印を掃除する古さ（7日）。
+const MARK_CLEAN_MS = 7 * 24 * 60 * 60 * 1000;
 
 // まーちゅう以外が送ったと分かる書き出し（頭の空白を除いた先頭）。ここから始まるメッセージでは、印を付けない。
 const FOREIGN_STARTS = ['Another Claude session sent a message', '<agent-message', '<task-notification', '<system-reminder'];
 
 const ATTACHED_CONTEXT =
 	'まーちゅうの指示で、このセッションに「直接コード」の印を付けた（24時間で切れる）。' +
-	'簡単な修正の道（workflow.md）の範囲の小さなコードの直し（3ファイル以内・追加と削除の合計20行以内。新しい関数・クラス・ファイルの追加、依存の追加・更新、秘密情報に触れるものは範囲の外）に限り、ガネーシャが Edit / Write で直してよい。' +
+	'簡単な修正の道（workflow.md）の範囲の小さなコードの直しに限り、ガネーシャが Edit / Write で直してよい。範囲と流れは workflow.md の「簡単な修正の道」に従う。' +
 	'消す言い方は「直接書くのはおしまい」。まーちゅうが打った指示でないと分かっているときは、印があっても直さない。';
 const DETACHED_CONTEXT = 'まーちゅうの指示で、このセッションの「直接コード」の印を消した。コードは直せない。';
 const FAILED_CONTEXT = '「直接コード」の印を消せなかった。ガネーシャはコードを直さない。まーちゅうに伝える（印のファイルを手で消してもらう）。';
@@ -57,6 +60,17 @@ function lstatOrNull(p) {
 		return lstatSync(p);
 	} catch {
 		return null;
+	}
+}
+
+// 無い（ENOENT）ときだけ true。ほかのエラー（確かめられない）は false。
+function isAbsent(p) {
+	try {
+		lstatSync(p);
+
+		return false;
+	} catch (error) {
+		return error?.code === 'ENOENT';
 	}
 }
 
@@ -121,12 +135,12 @@ function writeMark(sessionId) {
 	}
 }
 
-// 印を消す。消した後にまだあるかを確かめて判定する。置き場所のディレクトリがリンクなら、何もせず失敗とする。
+// 印を消す。消した後にまだあるかを確かめて判定する（確かめで「無い」（ENOENT）と分かったときだけ消えたとし、ほかのエラーは消せなかったと扱う）。置き場所のディレクトリがリンクなら、何もせず失敗とする。
 function removeMark(sessionId) {
 	const dir = lstatOrNull(markDir());
 
 	if (dir === null) {
-		return true;
+		return isAbsent(markDir());
 	}
 
 	if (dir.isSymbolicLink() || !dir.isDirectory()) {
@@ -139,10 +153,10 @@ function removeMark(sessionId) {
 		// 消せたかは下で確かめる
 	}
 
-	return lstatOrNull(markPath(sessionId)) === null;
+	return isAbsent(markPath(sessionId));
 }
 
-// ほかのセッションの、24時間より古い印を消す。ふつうのファイルだけを対象にし、リンクやディレクトリには触れない。
+// ほかのセッションの、7日より古い印を消す（24時間で切れた印をすぐ消すと、元のセッションのガードが「切れた」ではなく「無い」と見て、切れた旨の理由の文が出なくなるため）。ふつうのファイルだけを対象にし、リンクやディレクトリには触れない。
 function cleanOldMarks(ownSessionId) {
 	if (!markDirExists()) {
 		return;
@@ -174,14 +188,15 @@ function cleanOldMarks(ownSessionId) {
 		try {
 			const data = JSON.parse(readFileSync(file, 'utf8'));
 
-			if (data && Number.isSafeInteger(data.createdAt)) {
+			// 整数でない・5分より先の時刻の印（ガードは「無い」と扱う）は、ファイルの更新時刻で見る
+			if (data && Number.isSafeInteger(data.createdAt) && data.createdAt <= now + MARK_FUTURE_MS) {
 				createdAt = data.createdAt;
 			}
 		} catch {
 			// 読めない印は、ファイルの更新時刻で古さを見る
 		}
 
-		if (now - createdAt > MARK_TTL_MS) {
+		if (now - createdAt > MARK_CLEAN_MS) {
 			try {
 				unlinkSync(file);
 			} catch {

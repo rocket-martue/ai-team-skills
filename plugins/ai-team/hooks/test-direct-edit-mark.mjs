@@ -5,7 +5,7 @@
 // git は呼ばない。依存なし。
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +67,7 @@ try {
 	let r = prompt('s1', `この色を替えて。${ATTACH_1}`);
 	check('付ける言い方1で印が付く・終了コード 0', r.status === 0 && has('s1'));
 	check('付けたときに additionalContext が出る', context(r) !== '' && context(r).includes('印を付けた'));
+	check('付けたときの additionalContext に、範囲の線の中身（「3ファイル」「20行」）が入っていない', !context(r).includes('3ファイル') && !context(r).includes('20行') && context(r).includes('workflow.md'));
 
 	reset();
 	r = prompt('s1', `${ATTACH_2}ね`);
@@ -168,15 +169,56 @@ try {
 	reset();
 
 	// ---- 掃除 ----
+	const HOUR = 60 * 60 * 1000;
+	const DAY = 24 * HOUR;
 	reset();
-	writeOld('old1', 25 * 60 * 60 * 1000);
-	writeOld('fresh1', 60 * 60 * 1000);
+	writeOld('old1', 8 * DAY);
+	writeOld('mid1', 25 * HOUR);
+	writeOld('fresh1', HOUR);
 	r = prompt('s1', 'ふつうのメッセージ');
-	check('ほかのセッションの24時間より古い印が消える', r.status === 0 && !has('old1'));
+	check('ほかのセッションの7日より古い印が消える', r.status === 0 && !has('old1'));
+	check('ほかのセッションの24時間より古く7日以内の印は残る', has('mid1'));
 	check('ほかのセッションの新しい印は残る', has('fresh1'));
-	writeOld('old2', 25 * 60 * 60 * 1000);
+	writeOld('old2', 8 * DAY);
 	r = prompt('s1', ATTACH_1);
-	check('付けるときにも古い印が消える', !has('old2') && has('s1'));
+	check('付けるときにも7日より古い印が消える', !has('old2') && has('s1'));
+
+	// createdAt が5分より先の時刻・整数でない印は、ファイルの更新時刻で古さを見る
+	const setMtime = (session, ageMs) => {
+		const t = new Date(Date.now() - ageMs);
+		utimesSync(markFile(session), t, t);
+	};
+	reset();
+	mkdirSync(markRoot, { recursive: true });
+	writeFileSync(markFile('futold'), JSON.stringify({ createdAt: Date.now() + 10 * DAY }));
+	setMtime('futold', 8 * DAY);
+	writeFileSync(markFile('futnew'), JSON.stringify({ createdAt: Date.now() + 10 * DAY }));
+	writeFileSync(markFile('badold'), 'not json');
+	setMtime('badold', 8 * DAY);
+	writeFileSync(markFile('floatold'), JSON.stringify({ createdAt: 1.5 }));
+	setMtime('floatold', 8 * DAY);
+	r = prompt('s1', 'ふつうのメッセージ');
+	check('createdAt が5分より先の時刻の印も、更新時刻が7日より古ければ消える', r.status === 0 && !has('futold'));
+	check('createdAt が5分より先の時刻の印でも、更新時刻が新しければ残る', has('futnew'));
+	check('JSON でない印・createdAt が整数でない印も、更新時刻が7日より古ければ消える', !has('badold') && !has('floatold'));
+
+	// ---- 消した後の確かめが ENOENT 以外のエラーのとき ----
+	reset();
+	const canChmod = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
+	if (canChmod) {
+		mkdirSync(markRoot, { recursive: true });
+		writeFileSync(markFile('s1'), JSON.stringify({ createdAt: Date.now() }));
+		chmodSync(markRoot, 0o000);
+		try {
+			r = prompt('s1', DETACH);
+			check('消した後の確かめが ENOENT 以外のエラーのときは、消せなかったと伝える', r.status === 0 && context(r).includes('消せなかった') && !context(r).includes('印を消した'));
+		} finally {
+			chmodSync(markRoot, 0o755);
+		}
+	} else {
+		console.log('skip 消した後の確かめが ENOENT 以外のエラーのときの確かめ（権限でエラーを作れない環境）');
+	}
+	reset();
 
 	// ---- リンク ----
 	const linkType = process.platform === 'win32' ? 'junction' : 'dir';
