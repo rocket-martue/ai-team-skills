@@ -70,6 +70,7 @@ claude plugin validate plugins/ai-team
 
 - `claude plugin validate` は、マーケットプレイスとプラグインの形を確かめる。`--strict` は付けない（`version` を書かないので、`--strict` では必ず失敗する）。終了コード 0 で、出ている警告が `version` が無いことだけであること。`claude` が PATH に無ければ、VS Code の拡張の `claude.exe` を使う
 - `claude -p --settings <ファイル>` で試すときは、`enabledPlugins` を含む設定を渡さない（そのプラグインが user スコープに自動で入る）。試しの後は `installed_plugins.json` に user の記録が増えていないか見る
+- `claude -p` で allow を試すときは、信頼していないリポジトリでは `.claude/settings.json` の allow が無視される（「Ignoring N permissions.allow entries from .claude/settings.json: this workspace has not been trusted」と出る）。`--settings` で渡した allow は信頼と関係なく効くので、`--settings` で通っても、そのリポジトリの VS Code のセッションで allow が効くとは言えない（#57）。VS Code のセッションでの確かめ方は「導入後に確認すること」の「allow が効くか」
 
 ### `ai-team.json` の書き方
 
@@ -226,6 +227,13 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
    - Codex CLI を入れて、ログインする：`npm install -g @openai/codex` と `codex login`
    - `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）に置く。既にあれば、まーちゅうの許可を得て、テンプレートの版と見比べて合わせる。古い形（秘密情報の一覧をリポジトリの `.claude/hooks/guard-code-edit.mjs` の `SECRET_PATTERNS` から取る。`ai-team.json` の文字列が無い）のままだと、`.claude/ai-team.json` の `secretPatterns` を健さんが知らないので、健さんを呼ぶ前に必ず合わせる
 6. VS Code を閉じて開き直す（ウィンドウの再読み込みでは読み込まれない）
+   - **開き直す前に、リポジトリを信頼する**（PC ごと・リポジトリごとに1回）。信頼していないリポジトリでは、`.claude/settings.json` の allow が丸ごと無視され、健さんのラッパーや `git fetch origin` にも確認が出る（#57）
+   - 信頼の印は、ドライブ名の大文字・小文字で別に持つ（`<ユーザーのホーム>/.claude.json` の `projects` の `C:/GitHub/<repo>` と `c:/GitHub/<repo>` の `hasTrustDialogAccepted`）。VS Code のセッションは小文字の `c:` で動くことがあり、PowerShell から起動した `claude` は大文字の `C:` にそろうので、両方で信頼する。ターミナル（PowerShell）で次の2つを1つずつ打ち、信頼のダイアログで「Yes, I trust this folder」を選んでから `/exit` で終える（信頼してあれば、ダイアログは出ずに入力欄が出る。初めて `claude` を起動する PC では、先に見た目やログインの画面が出る）。`claude` が PATH に無ければ、この節の冒頭の `claude.exe` のパスに置き換える
+     ```
+     cd C:\GitHub\<repo>; claude
+     cmd /c "cd /d c:\GitHub\<repo> && claude"
+     ```
+   - 信頼のダイアログには、settings.json が前もって許可する決まり（「This folder pre-approves N tool permissions」）が並ぶ。テンプレートの allow と、そのリポジトリで足した分のほかに、知らない決まりが無いかを見てから信頼する
 7. 導入の PR を作るときは、PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）。写す版は、最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを書き留めて決める。その版の中身（`git show` などで読む）から写す（「テンプレートを直した後の反映」の「写す版を決める」）
 
 ### 写しからプラグインへの切り替え
@@ -242,7 +250,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
    - メジェドの報告は、このセッションで delegate-to-mejed の「メジェドの報告の受け方」どおりに受け切る（行が欠けていれば、同じメジェドに書き直させる）。そのうえで、報告の「結果」の行と「途中で2回以上落ちたチェック」の行を、そのまま review.md に書いておく（開き直した後のセッションで、停止の扱いと K2 の要否を決めるため）
 3. 古い写しを消した後は、**そのセッションでは古いスキルも健さんのラッパーも呼べない**（セッションの開始時の写しで動くため）。diff-reviewer・PR の前のレビュー役・K2 は、開き直した後のセッションで行う
 4. settings.json を置いた後に、リポジトリの根で `claude plugin install ai-team@ai-team-skills --scope project`（「導入方法」の手順3と同じ注意）。打った後、開き直す前に、install の差分（install の前の settings.json の写しと比べる）と入った版（`installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`）を見た結果を review.md に書く。入った版が手順1で決めた版と違えば、開き直さずに止まる（リポジトリ側とプラグインの版がずれるため）
-5. VS Code を閉じて開き直し、新しいセッションで「導入後に確認すること」を確かめる。そのあと、review.md に書いておいたメジェドの報告の行で、delegate-to-mejed の「メジェドの報告の受け方」の分け方どおりに K2 が要るかを決め（要るなら diff-reviewer の前に K2）、diff-reviewer・PR の前のレビュー役に進む。PR の題名には、写した版を「（ai-team-skills <版>）」の形で書く（「導入方法」の7と同じ。次の反映の始まりになる）
+5. VS Code を閉じて開き直し（開き直す前に、「導入方法」の6のとおりリポジトリを信頼する）、新しいセッションで「導入後に確認すること」を確かめる。そのあと、review.md に書いておいたメジェドの報告の行で、delegate-to-mejed の「メジェドの報告の受け方」の分け方どおりに K2 が要るかを決め（要るなら diff-reviewer の前に K2）、diff-reviewer・PR の前のレビュー役に進む。PR の題名には、写した版を「（ai-team-skills <版>）」の形で書く（「導入方法」の7と同じ。次の反映の始まりになる）
 
 ## 外し方
 
@@ -351,4 +359,7 @@ hub で確かめた（`03bc685` → `f559c20`）。`plugin update` は settings.
   **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
 - **秘密情報**：案件に応じて、パターンを追加する（`.claude/ai-team.json` の `secretPatterns`・settings.json の `Read(...)` の deny・リポジトリの `docs/team/common-rules.md` の案件の秘密情報の箇条を、同じにそろえる。team-rules.md はプラグインの中なので直さない。既定の4つは `ai-team-config.mjs` の `SECRET_PATTERNS` にあり、設定ファイルでは外せない。健さんの AGENTS.md（PC の AGENTS.md がテンプレートの今の版なら）は、読むリポジトリの設定ファイルを見るので直さなくてよい）
-- **ラッパーの確認**：VS Code のセッションでは、プラグインのキャッシュのラッパーを打つと、settings.json の allow があっても確認が出る（`claude -p` では出ない。原因は #57 で調べ中）。出たら「一度だけ許可」で通してよい。「常に許可」は、#57 で決めるまで選ばない（`.claude/settings.local.json` に決まりが書かれるため）
+- **allow が効くか**：VS Code の新しいセッションを Manual モードで開き、スキルを読み込ませずに、settings.json の allow にあって、allow が無ければ確認が出るコマンドを、1つずつ単独で打たせる。確認が出なければ効いている。打つのは `git fetch origin` と、健さんのラッパーの `make-patch`（`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<ユーザーのホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.ps1" -Mode make-patch -Task allow-check -OutFile "<そのセッションの scratchpad>/allow-check.patch"`。健さんは呼ばない。差分が無ければ終了コード 4 で、パッチは作らない）
+  - `git status`・`git show` などの読むだけのコマンドは、allow が無くても通るので確かめにならない。codex スキルを読み込んだ後は、スキルの許可（`allowed-tools`）でラッパーが通るので、これも確かめにならない
+  - 確認が出たら、リポジトリを信頼したか（「導入方法」の6。大文字・小文字の両方）を見る。「常に許可」は選ばない（`.claude/settings.local.json` に決まりが書かれ、settings.json の allow が効いていないことが隠れるため）
+  - 画面を見なくても、セッションの記録（`<ユーザーのホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の行の `permissionDecision` で分かる。`"source":"config"` で `reasonType` が `rule` か `subcommandResults` なら allow（またはスキルの許可）に当たった。`classifier` なら auto モードの判定で通った（allow に当たったかは分からない）。`"source":"user_temporary"` ならダイアログで通した
