@@ -4,10 +4,12 @@
 // - リンク（シンボリックリンク・ジャンクション）をたどる関数
 // - グロブを正規表現に直す関数
 // - 設定ファイル（.claude/ai-team.json）の読み込みと確かめ
+// - 「直接コード」の印（まーちゅうの指示でガネーシャがコードを直せるしるし）の置き場所と読み方
 // - ラッパーから呼ぶ入口（node ai-team-config.mjs check ...）
 // リポジトリごとの追加は .claude/ai-team.json（secretPatterns・plannerWritable）に書く。このファイルは書き換えない。
 
 import { lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +24,59 @@ export const CONFIG_CANDIDATES = ['.claude/ai-team.json', 'repo-files/claude/ai-
 export const OK_MARK = 'ai-team-config: ok';
 
 const CONFIG_KEYS = ['secretPatterns', 'plannerWritable'];
+
+// ---- 「直接コード」の印 ----
+// まーちゅうが決まった言い方で指示したセッションにだけ付く。ガードは、メインのエージェントの行 8（コード）を、有効な印があるときだけ通す。
+// 置き場所：<一時ディレクトリ>/ai-team-direct-edit/<session_id>（scratchpad の <一時ディレクトリ>/claude/ の外）。
+// 中身：{"createdAt": <付けた時刻。1970年からのミリ秒の整数>}
+export const MARK_DIR_NAME = 'ai-team-direct-edit';
+export const MARK_TTL_MS = 24 * 60 * 60 * 1000;
+export const MARK_FUTURE_MS = 5 * 60 * 1000;
+
+export function markDir() {
+	return path.join(tmpdir(), MARK_DIR_NAME);
+}
+
+// session_id はファイル名に使うので、英数字・-・_ の1〜128文字だけ受ける。
+export function isValidSessionId(id) {
+	return typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+}
+
+export function markPath(sessionId) {
+	return path.join(markDir(), sessionId);
+}
+
+// 印の状態を返す。'valid'（有効）・'expired'（24時間より古い）・'none'（無い・読めない・壊れている・リンク・ハードリンクが2つ以上）。
+// 未来の時刻は、5分先までは今と同じ、それより先は壊れているとする。
+export function readMark(sessionId, now = Date.now()) {
+	if (!isValidSessionId(sessionId)) {
+		return 'none';
+	}
+
+	try {
+		if (lstatSync(markDir()).isSymbolicLink()) {
+			return 'none';
+		}
+
+		const file = markPath(sessionId);
+		const stat = lstatSync(file);
+
+		if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) {
+			return 'none';
+		}
+
+		const data = JSON.parse(readFileSync(file, 'utf8'));
+		const createdAt = data && typeof data === 'object' ? data.createdAt : undefined;
+
+		if (!Number.isSafeInteger(createdAt) || createdAt > now + MARK_FUTURE_MS) {
+			return 'none';
+		}
+
+		return now - createdAt > MARK_TTL_MS ? 'expired' : 'valid';
+	} catch {
+		return 'none';
+	}
+}
 
 // Windows のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
 // パターンとの照合も包含の判定も、Windows では小文字にそろえてから行う。
