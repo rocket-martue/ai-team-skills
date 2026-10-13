@@ -5,6 +5,7 @@
 // - .claude/・docs/team/・根の CLAUDE.md は、誰が書くときも確認（ask）を出す
 // - メジェドは docs/tasks/<タスク名>/plan.md を書き換えられない
 // - 秘密情報のファイルは誰も触れない
+// - まーちゅうの指示の印（direct-edit-mark.mjs が付ける）が有効なセッションのガネーシャ（メイン）は、コードも編集できる。印の置き場所への編集は誰でも止める
 // - リポジトリの外は、Claude Code 自身の置き場所（メモリ・計画ファイル・scratchpad）だけ通す
 // リポジトリごとの追加は .claude/ai-team.json（secretPatterns・plannerWritable）に書く。判定の部品は ai-team-config.mjs。このファイルは書き換えない。
 // 判定は「指定されたパス」と「シンボリックリンクをたどった実体のパス」の両方に当て、きつい方（止める > 確認 > 通す）を取る。
@@ -14,7 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import { forMatch, isSecretPath, readConfig, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
+import { forMatch, isSecretPath, markDir, readConfig, readMark, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
 
 // エージェントの名前：プラグインに切り替える前のリポジトリでは 'mejed'、プラグインのエージェントは 'ai-team:mejed'。
 const IMPLEMENTERS = ['mejed', 'ai-team:mejed'];
@@ -133,14 +134,23 @@ function judge(absolute, projectDir, outsideWritable, label, config) {
 		return { level: PASS };
 	}
 
-	if (isImplementer || PLANNER_WRITABLE.some((re) => re.test(rel)) || config.writableRegexps.some((re) => re.test(rel))) {
+	if (
+		isImplementer ||
+		directEdit ||
+		PLANNER_WRITABLE.some((re) => re.test(rel)) ||
+		config.writableRegexps.some((re) => re.test(rel))
+	) {
 		return { level: PASS };
 	}
 
 	const who = isSubagent ? `サブエージェント「${agentType}」` : 'ガネーシャ';
+	const expired =
+		markState === 'expired'
+			? 'まーちゅうの指示の印は24時間で切れました（付け直すのはまーちゅうです）。'
+			: '';
 
 	return blocked(
-		`guard-code-edit: ${who}は ${label} を編集できません。実装は mejed サブエージェントに任せてください（delegate-to-mejed スキル）。`
+		`guard-code-edit: ${who}は ${label} を編集できません。${expired}実装は mejed サブエージェントに任せてください（delegate-to-mejed スキル）。`
 	);
 }
 
@@ -161,6 +171,10 @@ if (!target) {
 const isSubagent = Boolean(input.agent_id);
 const agentType = input.agent_type || '';
 
+// まーちゅうの指示の印。メインのエージェントだけが対象で、そのセッションの印が有効なときだけ、行 8（コード）を通す。
+const markState = isSubagent ? 'none' : readMark(input.session_id);
+const directEdit = markState === 'valid';
+
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
 const specified = path.resolve(projectDir, target);
 
@@ -177,6 +191,19 @@ if (loaded.status === 'broken' && loaded.link) {
 }
 
 const real = realPath(specified);
+
+// 印の置き場所（とその下）への編集は、誰が・どこで開いていても止める（印を作れないようにする）。指定されたパスと実体のパスの両方に当てる。
+{
+	const markRoot = markDir();
+	const markRootReal = realPath(markRoot);
+	const touchesMark = [specified, real]
+		.filter((t) => t !== null)
+		.some((t) => isInside(t, markRoot) || (markRootReal !== null && isInside(t, markRootReal)));
+
+	if (touchesMark) {
+		block(`guard-code-edit: ${target} は印の置き場所なので編集できません。`);
+	}
+}
 
 // 編集先が設定ファイルそのものか。設定ファイルがリンクのときは当たらない（ふつうの判定に回す。リンク先が秘密情報なら止まる）。
 const isConfigItself =

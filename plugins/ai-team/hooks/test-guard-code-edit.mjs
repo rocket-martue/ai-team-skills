@@ -5,7 +5,7 @@
 // git は呼ばない。依存なし。
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,19 +52,46 @@ function judgeResult(name, result, expected) {
 	console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}（期待 ${expected}・実際 ${result.status}）`);
 }
 
-function run(name, { file, agent = 'main', proj = project }, expected) {
+// session と tmp は印の確かめ用。tmp を渡すと、子のプロセスの一時ディレクトリ（TEMP・TMP・TMPDIR）を仮の場所に向ける。
+function run(name, { file, agent = 'main', proj = project, session, tmp }, expected) {
 	const input = { tool_name: 'Edit', tool_input: { file_path: file }, cwd: proj };
+	if (session !== undefined) {
+		input.session_id = session;
+	}
 	if (agent !== 'main') {
 		input.agent_id = 'a1';
 		input.agent_type = agent;
 	}
+	const env = { ...process.env, CLAUDE_PROJECT_DIR: proj };
+	if (tmp !== undefined) {
+		env.TEMP = tmp;
+		env.TMP = tmp;
+		env.TMPDIR = tmp;
+	}
 	const result = spawnSync(process.execPath, [hook], {
 		input: JSON.stringify(input),
-		env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
+		env,
 		encoding: 'utf8',
 	});
 	judgeResult(name, result, expected);
+	return result;
 }
+
+const check = (label, ok) => {
+	if (!ok) {
+		failed++;
+	}
+	console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}`);
+};
+
+const trySymlinkSafe = (target, linkPath, type) => {
+	try {
+		symlinkSync(target, linkPath, type);
+		return true;
+	} catch {
+		return false;
+	}
+};
 
 function runRaw(name, raw, expected) {
 	const result = spawnSync(process.execPath, [hook], {
@@ -359,17 +386,111 @@ try {
 		}
 	}
 
+	// ---- 直接コードの印（まーちゅうの指示。direct-edit-mark.mjs が付ける） ----
+	{
+		const fakeTmp = path.join(sandbox, 'faketmp');
+		const markRoot = path.join(fakeTmp, 'ai-team-direct-edit');
+		mkdirSync(markRoot, { recursive: true });
+		const HOUR = 60 * 60 * 1000;
+		const setMark = (session, content) => {
+			mkdirSync(markRoot, { recursive: true });
+			writeFileSync(path.join(markRoot, session), typeof content === 'string' ? content : JSON.stringify(content));
+		};
+		const fresh = () => ({ createdAt: Date.now() });
+		const code = p('src', 'a.js');
+		const withMark = (session, extra = {}) => ({ file: code, session, tmp: fakeTmp, ...extra });
+
+		setMark('S1', fresh());
+		run('印: 印があるメインの src/a.js は通る', withMark('S1'), 0);
+		run('印: 印が無いセッションは止まる', withMark('S9'), 2);
+		run('印: session_id が無いと止まる', { file: code, tmp: fakeTmp }, 2);
+		setMark('S2', fresh());
+		run('印: ほかのセッションの印では止まる', withMark('S3'), 2);
+		run('印: worktree の中のコードも、印があれば通る', { file: p(WT, 'src', 'a.js'), session: 'S1', tmp: fakeTmp }, 0);
+		run('印: 印があっても .dev.vars は止まる', { file: p('.dev.vars'), session: 'S1', tmp: fakeTmp }, 2);
+		run('印: 印があってもリポジトリの外は止まる', { file: path.join(outside, 'a.js'), session: 'S1', tmp: fakeTmp }, 2);
+		run('印: 印があっても .claude/ の下は ask', { file: p('.claude', 'agents', 'a.md'), session: 'S1', tmp: fakeTmp }, 'ask');
+		run('印: 印があっても docs/team/ の下は ask', { file: p('docs', 'team', 'a.md'), session: 'S1', tmp: fakeTmp }, 'ask');
+		run('印: 印があっても plan.md は今までどおり通る', { file: p('docs', 'tasks', 'x', 'plan.md'), session: 'S1', tmp: fakeTmp }, 0);
+		run('印: ほかのサブエージェントは印があっても止まる', withMark('S1', OTHER), 2);
+		run('印: メジェドは今までどおり通る（印が無くても）', withMark('S9', MEJED), 0);
+		run('印: メジェドの plan.md は今までどおり止まる', { file: p('docs', 'tasks', 'x', 'plan.md'), session: 'S1', tmp: fakeTmp, ...MEJED }, 2);
+
+		setMark('Sold', { createdAt: Date.now() - 25 * HOUR });
+		const expiredResult = run('印: 24時間より古い印では止まる', withMark('Sold'), 2);
+		check('印: 24時間より古い印の理由に、印が切れたことが入る', expiredResult.stderr.includes('24時間で切れました'));
+		const noMarkResult = run('印: 印が無いときの理由は今のまま', withMark('S9'), 2);
+		check(
+			'印: 印が無いときの理由に、印のことは書かない',
+			!noMarkResult.stderr.includes('印') && noMarkResult.stderr.includes('mejed サブエージェントに任せてください')
+		);
+		setMark('Sfuture4', { createdAt: Date.now() + 4 * 60 * 1000 });
+		run('印: 4分先の時刻は今と同じに扱う（通る）', withMark('Sfuture4'), 0);
+		setMark('Sfuture6', { createdAt: Date.now() + 6 * 60 * 1000 });
+		run('印: 5分より先の時刻は止まる', withMark('Sfuture6'), 2);
+		setMark('Sbad1', 'not json');
+		run('印: JSON でない中身は止まる', withMark('Sbad1'), 2);
+		setMark('Sbad2', { createdAt: 1.5 });
+		run('印: createdAt が整数でないと止まる（小数）', withMark('Sbad2'), 2);
+		setMark('Sbad3', { createdAt: String(Date.now()) });
+		run('印: createdAt が整数でないと止まる（文字列）', withMark('Sbad3'), 2);
+		setMark('Sbad4', {});
+		run('印: createdAt が無いと止まる', withMark('Sbad4'), 2);
+		run('印: session_id が不正（../）なら止まる', withMark('../S1'), 2);
+
+		// リンク・ハードリンク（作れない環境では飛ばす）
+		const victim = path.join(sandbox, 'mark-victim.json');
+		writeFileSync(victim, JSON.stringify(fresh()));
+		if (trySymlinkSafe(victim, path.join(markRoot, 'Slink'), 'file')) {
+			run('印: 印のファイルがシンボリックリンクなら止まる', withMark('Slink'), 2);
+		} else {
+			console.log('skip 印のファイルがシンボリックリンクの確かめ（シンボリックリンクを作れない環境）');
+		}
+		let hardLinked = true;
+		try {
+			linkSync(path.join(markRoot, 'S1'), path.join(sandbox, 'mark-alias'));
+		} catch {
+			hardLinked = false;
+		}
+		if (hardLinked) {
+			run('印: ハードリンクが2つ以上ある印は止まる', withMark('S1'), 2);
+			unlinkSync(path.join(sandbox, 'mark-alias'));
+			run('印: ハードリンクの別名を消せば、また通る', withMark('S1'), 0);
+		} else {
+			console.log('skip ハードリンクの確かめ（作れない環境）');
+		}
+		{
+			const linkTmp = path.join(sandbox, 'linktmp');
+			const realMarks = path.join(sandbox, 'realmarks');
+			mkdirSync(linkTmp, { recursive: true });
+			mkdirSync(realMarks, { recursive: true });
+			writeFileSync(path.join(realMarks, 'S1'), JSON.stringify(fresh()));
+			if (trySymlinkSafe(realMarks, path.join(linkTmp, 'ai-team-direct-edit'), process.platform === 'win32' ? 'junction' : 'dir')) {
+				run('印: 置き場所のディレクトリがリンクなら止まる', { file: code, session: 'S1', tmp: linkTmp }, 2);
+			} else {
+				console.log('skip 置き場所のディレクトリがリンクの確かめ（リンクを作れない環境）');
+			}
+		}
+
+		// 印の置き場所への編集は、誰でも止める（リポジトリを置き場所の上で開いたときも含む）
+		const inMark = path.join(markRoot, 'Snew');
+		for (const [roleName, role] of roles) {
+			run(`印: 置き場所への編集は止まる（${roleName}・仮の一時ディレクトリを開いたとき）`, { file: inMark, proj: fakeTmp, session: 'S1', tmp: fakeTmp, ...role }, 2);
+			run(`印: 置き場所への編集は止まる（${roleName}・別のリポジトリを開いたとき）`, { file: inMark, session: 'S1', tmp: fakeTmp, ...role }, 2);
+			run(`印: 置き場所そのものへの編集も止まる（${roleName}）`, { file: markRoot, proj: fakeTmp, session: 'S1', tmp: fakeTmp, ...role }, 2);
+			run(`印: 既にある印への編集も止まる（${roleName}）`, { file: path.join(markRoot, 'S1'), proj: fakeTmp, session: 'S1', tmp: fakeTmp, ...role }, 2);
+		}
+		run(
+			'印: 仮の一時ディレクトリを開いたとき、置き場所の外のコードは今までどおり（メジェドは通る）',
+			{ file: path.join(fakeTmp, 'src', 'a.js'), proj: fakeTmp, session: 'S9', tmp: fakeTmp, ...MEJED },
+			0
+		);
+	}
+
 	// ---- settings.json ----
 	const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
 	const ask = settings.permissions?.ask || [];
 	const deny = settings.permissions?.deny || [];
-	const check = (label, ok) => {
-		if (!ok) {
-			failed++;
-		}
-		console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}`);
-	};
-
 	for (const rule of [
 		'Bash(git -C:*)',
 		'Bash(git -c:*)',
@@ -475,6 +596,23 @@ try {
 	check(
 		'hooks.json の SessionStart に session-start.mjs が登録されている',
 		sessionHooks.some((h) => h.command === 'node' && (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs')
+	);
+	// 印のフック（direct-edit-mark.mjs）の登録
+	const markCommand = (h) => h.command === 'node' && (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/direct-edit-mark.mjs';
+	const hooksOf = (name) => (pluginHooks[name] || []).flatMap((e) => e.hooks || []);
+	check('hooks.json の UserPromptSubmit に direct-edit-mark.mjs が登録されている', hooksOf('UserPromptSubmit').some(markCommand));
+	check('hooks.json の SessionEnd に direct-edit-mark.mjs が登録されている', hooksOf('SessionEnd').some(markCommand));
+	check(
+		'hooks.json の SessionStart の matcher resume に direct-edit-mark.mjs が登録されている',
+		(pluginHooks.SessionStart || []).some((e) => e.matcher === 'resume' && (e.hooks || []).some(markCommand))
+	);
+	check(
+		'hooks.json の SessionStart の session-start.mjs は matcher なしで残っている',
+		(pluginHooks.SessionStart || []).some(
+			(e) =>
+				e.matcher === undefined &&
+				(e.hooks || []).some((h) => h.command === 'node' && (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs')
+		)
 	);
 	check('settings.json に hooks が無い（ガードのフックはプラグインに移った）', settings.hooks === undefined);
 } finally {

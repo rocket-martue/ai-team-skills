@@ -4,7 +4,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 | 名前 | 役 | 中身 |
 | --- | --- | --- |
-| ガネーシャ | 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応 | Claude Code のメイン |
+| ガネーシャ | 計画・メジェドへの実装依頼・レビュー・頼まれたときのコミットと PR・PR に付いた指摘の対応・まーちゅうの指示があったときの小さなコードの直し | Claude Code のメイン |
 | メジェド | 実装・指摘の修正 | サブエージェント `ai-team:mejed`（既定は Haiku。plan.md で Sonnet を選べる） |
 | 健さん | 読むだけの相談・レビューと、画像の生成。実装は頼まない。承認前・チェックが2回以上落ちたとき・PR の前の確認の中心（いずれもレビューの道で選んだとき） | Codex CLI（外部委託業者）。スキル `codex` から呼ぶ |
 | Fさん | 壊しに来る役。計画の承認前に（レビューの道で選んだとき）、1つの計画につき1回だけ、計画書を壊す側から読んで指摘だけを返す。PR の後（レビューの道で `Fable` のとき）に PR の差分を読む。直さない | サブエージェント `ai-team:adversary`（Fable） |
@@ -36,11 +36,12 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | `plugins/ai-team/skills/diff-reviewer/` | ガネーシャ | PR 前の差分レビューと、PR に付いた指摘の対応 |
 | `plugins/ai-team/skills/codex/` | ガネーシャ・メジェド | 健さん（Codex CLI）に相談・レビュー・画像の生成を頼む。ラッパーは `scripts/invoke-codex.ps1`（Windows PowerShell） |
 | `plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs` | ガネーシャ・メジェド | ラッパーの review・make-patch の前の秘密情報の確かめと、make-patch のパッチの確認。偽物の `codex` と仮の Git のリポジトリだけを使い、本物の健さんは呼ばない |
-| `plugins/ai-team/hooks/hooks.json` | 全員 | フックの登録。PreToolUse（編集のガード）と SessionStart（チーム共通の決まりを入れる） |
+| `plugins/ai-team/hooks/hooks.json` | 全員 | フックの登録。PreToolUse（編集のガード）、SessionStart（チーム共通の決まりを入れる）、UserPromptSubmit・SessionEnd・SessionStart の matcher `resume`（直接コードの印を付ける・消す） |
 | `plugins/ai-team/hooks/guard-code-edit.mjs` | 全員 | 編集の直前に「誰が・どこを」編集するかを見て止める |
 | `plugins/ai-team/hooks/session-start.mjs` | 全員 | `docs/team-rules.md` を、セッションの始めにメインのエージェントの文脈へ入れる。読めないとき・1万文字を超えるときは、Read を促す文を入れる（セッションは止めない） |
-| `plugins/ai-team/hooks/ai-team-config.mjs` | 全員 | ガードと健さんのラッパーが使う判定の部品（秘密情報の既定の一覧・`ai-team.json` の読み込みとグロブ）。リポジトリでは書き換えない |
-| `plugins/ai-team/hooks/test-guard-code-edit.mjs`・`test-session-start.mjs` | 全員 | フックの確かめ。フックに入力の JSON を流して終了コードを見る。git は呼ばない（ガードの確かめは、テンプレートのリポジトリでだけ打つ） |
+| `plugins/ai-team/hooks/direct-edit-mark.mjs` | 全員 | まーちゅうのメッセージの決まった言い方を見て、セッションごとの「直接コード」の印を付ける・消す（UserPromptSubmit・SessionEnd・SessionStart の `resume`）。印があるセッションのガネーシャは、簡単な修正の道の範囲でコードを直せる |
+| `plugins/ai-team/hooks/ai-team-config.mjs` | 全員 | ガードと健さんのラッパーと印のフックが使う判定の部品（秘密情報の既定の一覧・`ai-team.json` の読み込みとグロブ・印の置き場所と読み方）。リポジトリでは書き換えない |
+| `plugins/ai-team/hooks/test-guard-code-edit.mjs`・`test-session-start.mjs`・`test-direct-edit-mark.mjs` | 全員 | フックの確かめ。フックに入力の JSON を流して終了コードを見る。git は呼ばない（ガードの確かめは、テンプレートのリポジトリでだけ打つ） |
 
 ### リポジトリ側（`repo-files/` の中身を写す）
 
@@ -61,6 +62,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 ```
 node plugins/ai-team/hooks/test-guard-code-edit.mjs
 node plugins/ai-team/hooks/test-session-start.mjs
+node plugins/ai-team/hooks/test-direct-edit-mark.mjs
 node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs
 claude plugin validate .
 claude plugin validate plugins/ai-team
@@ -116,7 +118,14 @@ claude plugin validate plugins/ai-team
 | 5 | `docs/team/` の下・リポジトリの根の `CLAUDE.md`（`Ganesha.md` を取り込む入口なので `docs/team/` と同じに守る） | 確認 | 確認 | 確認 |
 | 6 | `docs/tasks/<タスク名>/plan.md` | ○ | × | ○ |
 | 7 | `docs/tasks/` の下・Markdown（`.md`）・`.gitignore`・`.gitattributes`・`.github/ISSUE_TEMPLATE/` の下（＋ `.claude/ai-team.json` の `plannerWritable` で足したもの） | ○ | ○ | ○ |
-| 8 | それ以外（コード） | × | ○ | × |
+| 8 | それ以外（コード） | ×（まーちゅうの指示の印があるセッションでは○） | ○ | × |
+
+**直接コードの印**（行 8 をガネーシャに通すしるし）：
+- 置き場所は `<一時ディレクトリ>/ai-team-direct-edit/<session_id>`（セッションごと。中身は `{"createdAt": <ミリ秒>}`）。印のフック（`direct-edit-mark.mjs`）が、まーちゅうのメッセージに付ける言い方（「ガネーシャが直接コード書いて」「ガネーシャが直接直して」。空白は無視する。ほかの言い方は拾わない）があったときに付け、ガードが、メインのエージェントで、そのセッションの印が有効（24時間以内）のときだけ行 8 を通す。ほかのサブエージェントは印があっても×
+- 消す言い方は「直接書くのはおしまい」。セッションの終わり・再開でも消える。24時間で切れる（切れると、ガードの止める理由にそう出る）
+- まーちゅう以外が送ったと分かる書き出し（`Another Claude session sent a message`・`<agent-message`・`<task-notification`・`<system-reminder`）のメッセージでは付かない。知らない書き出しでは付きうる（フックは柵で、壁ではない）
+- 印の置き場所への編集は、誰でも止める。印のファイルかディレクトリがリンク、ハードリンクが2つ以上ある印は、無いものとして扱う
+- 範囲と流れは [plugins/ai-team/docs/workflow.md](plugins/ai-team/docs/workflow.md) の「簡単な修正の道」
 
 「確認」は、フックが `permissionDecision: "ask"` を返して、まーちゅうの確認を取る（理由は「チームの設定・規約なので、まーちゅうの確認を取る」）。
 
@@ -171,7 +180,7 @@ claude plugin validate plugins/ai-team
 5. マージ：まーちゅう
 6. マージの後：「マージした」→ ガネーシャが既定ブランチを origin に追いつかせる（`delegate-to-mejed` の「マージの後」）
 
-小さな文書の直し（「この README の誤字を直して。簡単な修正の道で」のような頼み方）は、計画・メジェド・diff-reviewer を通さず、まーちゅうの OK を取ってガネーシャが直し、PR の前のレビュー役（健さんの review か `/code-review`）だけを通す。範囲と流れは [plugins/ai-team/docs/workflow.md](plugins/ai-team/docs/workflow.md) の「簡単な修正の道」を見る。
+小さな文書の直し（「この README の誤字を直して。簡単な修正の道で」のような頼み方）は、計画・メジェド・diff-reviewer を通さず、まーちゅうの OK を取ってガネーシャが直し、PR の前のレビュー役（健さんの review か `/code-review`）だけを通す。直すことがもう分かっている小さなコードの直し（数行）は、まーちゅうが「ガネーシャが直接コード書いて」「ガネーシャが直接直して」と指示したときだけ、同じ道でガネーシャが直す（レビューは1回だけ）。範囲と流れは [plugins/ai-team/docs/workflow.md](plugins/ai-team/docs/workflow.md) の「簡単な修正の道」を見る。
 
 GitHub Projects のボードを使うなら、ユーザー側の手順で動かす（このテンプレートは持たない）。
 
@@ -185,7 +194,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 - PR の後：レビューの道で `Fable` を選んだときだけ、PR を作った直後に Fさん（adversary: pr）をバックグラウンドで1回回し、指摘を一次データで確かめて review.md と PR に書く
 - diff-reviewer の指摘による修正依頼は最大3回。PR に付いたレビュー（PR の後の Fさんを含む）での直しは別に最大3回。上限に達したら保留して、まーちゅうに判断を頼む
 - 承認をやり直したら、上限は数え直す（承認前の1つ目は数え直さない）
-- 簡単な修正：まーちゅうの OK で、ガネーシャが直して PR の前のレビュー役（健さんの review か `/code-review`）だけを通す（範囲は workflow.md）
+- 簡単な修正：まーちゅうの OK で、ガネーシャが直して PR の前のレビュー役（健さんの review か `/code-review`）だけを通す。小さなコードの直しは、まーちゅうの指示（付ける言い方）があったときだけ（範囲は workflow.md）
 
 ## worktree で作業するとき
 
@@ -337,6 +346,7 @@ hub で確かめた（`03bc685` → `f559c20`）。`plugin update` は settings.
 - **フックが動くか**：ガネーシャに「inc/ の PHP を1行直して」と頼み、フックで止められるか確認する。次にメジェドに同じことを頼み、通るか確認する。ガネーシャがメモリに書けることも確かめる
 - **Windows での実行**：フックは、シェルを通さない書き方（プラグインの `hooks/hooks.json` の `"command": "node"` と `"args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs"]`）で登録している。Git Bash が無い Windows では、シェル形のコマンドが PowerShell で動いて変数が空になり、フックが起動しないまま編集が通るため（起動できないフックは止める側に倒れない。公式ドキュメント hooks の「Exec form and shell form」）。止まらないときは `/hooks` で登録を確認する
 - **フックの単体確認**：フック（`node plugins/ai-team/hooks/test-guard-code-edit.mjs` が同じことを確かめる）に JSON を標準入力で渡して終了コードを見る（`CLAUDE_PROJECT_DIR` に仮のリポジトリのパスを入れる）。期待値は、メインの `src/a.js` が 2、メインの `docs/tasks/x/plan.md` が 0、`agent_type: ai-team:mejed`（切り替える前のリポジトリでは `mejed`）の `src/a.js` が 0、同じ `.dev.vars` が 2、ほかのサブエージェントの `src/a.js` が 2、メインのメモリ（`~/.claude/projects/<p>/memory/`）が 0、リポジトリの外が 2、JSON でない入力が 2。`.claude/` の下と `docs/team/` の下は終了コード 0 で、標準出力の JSON に `permissionDecision: "ask"` が入る
+- **直接コードの印**：ガネーシャに「ガネーシャが直接コード書いて」と言うと、印が付いた知らせが出て、小さなコード（数行）の Edit が通る。「直接書くのはおしまい」と言うと、印が消えた知らせが出て、コードの Edit がまた止まる。言い方を変えたメッセージ（「ガネーシャが直接コードを書いて」など）では付かない
 - **Bash・PowerShell 経由の書き込みは止まらない**：`echo > file` や `sed -i`、PowerShell の `Set-Content` のようなシェル経由の書き込みは、このフックの対象外。
   **auto モードでは確認も出ない**ので、仕組みの上ではガネーシャも Bash・PowerShell でコードを書き換えられる。ここは Ganesha.md の禁止事項で縛っている。気づいたら止める
 - **サブエージェントの権限モード**：メインが `acceptEdits` や `auto` で動いているときは、メジェドもそのモードで動く。フックは権限モードとは別の仕組みだけど、念のため `acceptEdits` でもガネーシャの編集が止まるか試す
