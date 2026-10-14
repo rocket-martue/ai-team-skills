@@ -489,49 +489,9 @@ try {
 
 	// ---- settings.json ----
 	const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-	const ask = settings.permissions?.ask || [];
 	const deny = settings.permissions?.deny || [];
-	for (const rule of [
-		'Bash(git -C:*)',
-		'Bash(git -c:*)',
-		'Bash(git --git-dir*)',
-		'Bash(git --work-tree*)',
-		'Bash(git --no-pager:*)',
-		'Bash(git stash:*)',
-		'Bash(git restore:*)',
-		'Bash(git clean:*)',
-		'Bash(git rm:*)',
-		'Bash(git branch:*)',
-		'Bash(git worktree remove:*)',
-		'Bash(git pull:*)',
-	]) {
-		check(`settings.json の ask に ${rule} がある`, ask.includes(rule));
-	}
-
-	// gh pr は、書き込むサブコマンドごとに ask に分ける（ask は allow より先に見られるため）。
-	// 読むだけのサブコマンドは allow に置く。ask に gh pr:* が残ると、読むだけの gh pr にも確認が出る。
-	const ghPrAsk = [
-		'create',
-		'new',
-		'edit',
-		'comment',
-		'close',
-		'reopen',
-		'ready',
-		'review',
-		'checkout',
-		'co',
-		'revert',
-		'lock',
-		'unlock',
-		'update-branch',
-	].map((sub) => `Bash(gh pr ${sub}:*)`);
-	ghPrAsk.push('Bash(gh pr -*)');
-	for (const rule of ghPrAsk) {
-		check(`settings.json の ask に ${rule} がある`, ask.includes(rule));
-	}
-	check('settings.json の ask に Bash(gh pr:*) が無い（読むだけの gh pr に確認が出るため）', !ask.includes('Bash(gh pr:*)'));
-	check('settings.json の ask に PowerShell(gh pr:*) が無い（読むだけの gh pr に確認が出るため）', !ask.includes('PowerShell(gh pr:*)'));
+	// ask は置かない（Manual では、どの決まりにも当たらないコマンドは確認が出る。Auto では判定器が見る。止めたいものは deny）
+	check('settings.json に ask が無い', settings.permissions?.ask === undefined);
 	for (const sub of ['list', 'ls', 'view', 'diff', 'checks', 'status']) {
 		for (const rule of [`Bash(gh pr ${sub}:*)`, `PowerShell(gh pr ${sub}:*)`]) {
 			check(`settings.json の allow に ${rule} がある`, (settings.permissions?.allow || []).includes(rule));
@@ -541,11 +501,8 @@ try {
 		check(`settings.json の allow に ${rule} がある`, (settings.permissions?.allow || []).includes(rule));
 	}
 
-	// deny と ask の Bash のルールすべてに、同じ形の PowerShell のルールがある
-	for (const [listName, list] of [
-		['ask', ask],
-		['deny', deny],
-	]) {
+	// deny の Bash のルールすべてに、同じ形の PowerShell のルールがある
+	for (const [listName, list] of [['deny', deny]]) {
 		for (const rule of list.filter((r) => r.startsWith('Bash('))) {
 			const ps = rule.replace(/^Bash\(/, 'PowerShell(');
 			check(`settings.json の ${listName} に ${ps} がある`, list.includes(ps));
