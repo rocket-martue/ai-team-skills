@@ -70,7 +70,7 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 | --- | --- |
 | `repo-files/claude/settings.json`・`plugins/ai-team/hooks/guard-code-edit.mjs`・`hooks/ai-team-config.mjs`・`hooks/hooks.json` | `node plugins/ai-team/hooks/test-guard-code-edit.mjs` |
 | `plugins/ai-team/hooks/session-start.mjs`・`plugins/ai-team/docs/team-rules.md`（1万文字の上限） | `node plugins/ai-team/hooks/test-session-start.mjs` |
-| `plugins/ai-team/hooks/direct-edit-mark.mjs` | `node plugins/ai-team/hooks/test-direct-edit-mark.mjs` |
+| `plugins/ai-team/hooks/direct-edit-mark.mjs`・`hooks/ai-team-config.mjs` | `node plugins/ai-team/hooks/test-direct-edit-mark.mjs` |
 | `plugins/ai-team/skills/codex/scripts/`・`hooks/ai-team-config.mjs` | `node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs` |
 | `.claude-plugin/`・`plugins/ai-team/.claude-plugin/`・スキルやエージェントの追加・名前の変更 | `claude plugin validate .` と `claude plugin validate plugins/ai-team` |
 
