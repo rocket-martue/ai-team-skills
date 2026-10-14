@@ -32,7 +32,7 @@ model: fable
   - 作業ツリーのパス
   - 既定のブランチの名前とブランチの名前（差分の取り方の `origin/<既定ブランチ>...<ブランチ>` に埋める。渡された名前をそのまま使い、自分で調べて取り違えない）
   - 差分の取り方：作業ツリーに `cd` してから `git diff -M --no-ext-diff --no-textconv --no-color --submodule=short --ignore-submodules=none origin/<既定ブランチ>...<ブランチ> -- . ":(exclude)docs/tasks/<タスク名>/"`。付け足しは健さんのラッパーの `make-patch` と同じ（`-c core.quotepath=false` だけは、settings.json の ask（`git -c`）に当たるので付けない。日本語のパスが引用符と8進で出ることがあるが、読むのには困らない）で、利用者の Git の設定（外部の差分の道具・textconv）に左右されず、外のコマンドを起動しないため。plan.md と review.md はコミット済みで差分に出てしまうので外す。plan.md は「承認前の確認」の節を読まずに別に Read で読む
-  - `git fetch origin` は呼ぶ前にガネーシャが打つ（読むだけのコマンドしか打たないため）。`git -C`・`git -c`・`gh pr` は使わない（settings.json の ask に当たり、バックグラウンドで止まるため）
+  - `git fetch origin` は呼ぶ前にガネーシャが打つ（読むだけのコマンドしか打たないため）。`git -C`・`git -c`・`gh pr` は使わない。`git -C`・`git -c` と書き込む `gh pr` は settings.json の ask に当たり、バックグラウンドで止まるため。読むだけの `gh pr` も、差分はガネーシャの渡した取り方で取るので使わない
 
 ## 問い（plan）
 

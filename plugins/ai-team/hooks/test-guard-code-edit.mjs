@@ -508,6 +508,39 @@ try {
 		check(`settings.json の ask に ${rule} がある`, ask.includes(rule));
 	}
 
+	// gh pr は、書き込むサブコマンドごとに ask に分ける（ask は allow より先に見られるため）。
+	// 読むだけのサブコマンドは allow に置く。ask に gh pr:* が残ると、読むだけの gh pr にも確認が出る。
+	const ghPrAsk = [
+		'create',
+		'new',
+		'edit',
+		'comment',
+		'close',
+		'reopen',
+		'ready',
+		'review',
+		'checkout',
+		'co',
+		'revert',
+		'lock',
+		'unlock',
+		'update-branch',
+	].map((sub) => `Bash(gh pr ${sub}:*)`);
+	ghPrAsk.push('Bash(gh pr -*)');
+	for (const rule of ghPrAsk) {
+		check(`settings.json の ask に ${rule} がある`, ask.includes(rule));
+	}
+	check('settings.json の ask に Bash(gh pr:*) が無い（読むだけの gh pr に確認が出るため）', !ask.includes('Bash(gh pr:*)'));
+	check('settings.json の ask に PowerShell(gh pr:*) が無い（読むだけの gh pr に確認が出るため）', !ask.includes('PowerShell(gh pr:*)'));
+	for (const sub of ['list', 'ls', 'view', 'diff', 'checks', 'status']) {
+		for (const rule of [`Bash(gh pr ${sub}:*)`, `PowerShell(gh pr ${sub}:*)`]) {
+			check(`settings.json の allow に ${rule} がある`, (settings.permissions?.allow || []).includes(rule));
+		}
+	}
+	for (const rule of ['Bash(git remote get-url:*)', 'PowerShell(git remote get-url:*)']) {
+		check(`settings.json の allow に ${rule} がある`, (settings.permissions?.allow || []).includes(rule));
+	}
+
 	// deny と ask の Bash のルールすべてに、同じ形の PowerShell のルールがある
 	for (const [listName, list] of [
 		['ask', ask],
