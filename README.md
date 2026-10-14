@@ -15,11 +15,18 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 > 以前は Codex をメジェドにしていたが、2つのツールの行き来（セッションの切り替え・進捗をリモートで見られない）の手間が大きかったので、
 > サブエージェントだけにした（2026-10-04）。
-> 当初は Codex の使用枠の消費も理由に挙げていたが、読み違いだった。5時間枠の表示の 85% は残りの量で、使ったのは 15% ほどだった（2026-10-05 に訂正。体制は変えない）。
+
+## 前提
+
+- 対象は、日本語で進める WordPress（PHP、phpcs）の案件。ほかの技術スタックで使うときは、リポジトリの `docs/team/common-rules.md` のチェックコマンドとレビューの観点、`.claude/settings.json` の allow を書き換える
+- フックに Node.js が要る。node が PATH に無いと、フックは何も言わずに外れる（止めない）
+- プラグインと、フックの入力に `agent_id`／`agent_type` が入る版の Claude Code が要る
+- 健さん（Codex CLI）は使わなくても回る。使うときのラッパーは Windows PowerShell 用
+- この README に出てくる gh-issue・gh-flow などの gh-* スキルは、ユーザー側に置くもので、このリポジトリには入っていない（無くても ai-team の流れは動く）
 
 ## 中身と置き場所
 
-このリポジトリは、Claude Code のマーケットプレイス `ai-team-skills`（根の `.claude-plugin/marketplace.json`）で、プラグイン `ai-team`（`plugins/ai-team/`）を配る。共通のものはプラグインに入り、リポジトリごとに違うもの（設定・固有の規約）は `repo-files/` から各リポジトリに写す。
+このリポジトリは、Claude Code のマーケットプレイス `ai-team-skills`（根の `.claude-plugin/marketplace.json`）で、プラグイン `ai-team`（`plugins/ai-team/`）を配る。共通のものはプラグインに入り、リポジトリごとに違うもの（設定・固有の規約）は `repo-files/` から各リポジトリに写す。`docs/tasks/` は、このリポジトリ自体の作業記録で、テンプレートには含まない（プラグインにも `repo-files/` にも入らない）。
 
 ### プラグイン（`plugins/ai-team/`）
 
@@ -212,7 +219,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 この節と「外し方」「テンプレートを直した後の反映」の `claude` のコマンドは、`claude` が PATH に無ければ、VS Code の拡張の `claude.exe`（`<ユーザーのホーム>/.vscode/extensions/anthropic.claude-code-<版>-<OS>/resources/native-binary/claude.exe`）で打つ。
 
-1. Claude Code に、マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。private のリポジトリなので、HTTPS で取れる認証が要る（`git ls-remote https://github.com/rocket-martue/ai-team-skills.git` が通れば足りる。通らなければ `gh auth login` と `gh auth setup-git`）。マーケットプレイスはユーザーの設定に書かれる（「declared in user settings」と出る）。外すときは「外し方」の5
+1. Claude Code に、マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。リポジトリを private にしているなら（フォークを private にしたときなど）、HTTPS で取れる認証が要る（`git ls-remote https://github.com/rocket-martue/ai-team-skills.git` が通れば足りる。通らなければ `gh auth login` と `gh auth setup-git`）。マーケットプレイスはユーザーの設定に書かれる（「declared in user settings」と出る）。外すときは「外し方」の5
 2. リポジトリに `repo-files/` の中身を置く
    - `repo-files/claude/` → `.claude/`（settings.json・ai-team.json）。既存の `settings.json` があれば、内容を見比べて置き換える（`Edit(**/*.php)` のような Edit の禁止が残るとメジェドが実装できない）。既存の `ai-team.json` があれば、足したパターンを消さないよう、中身を残す
    - `repo-files/docs/team/` → `docs/team/`（common-rules.md・Ganesha.md の2つが入る）
@@ -235,6 +242,18 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
      ```
    - 信頼のダイアログには、settings.json が前もって許可する決まり（「This folder pre-approves N tool permissions」）が並ぶ。テンプレートの allow と、そのリポジトリで足した分のほかに、知らない決まりが無いかを見てから信頼する
 7. 導入の PR を作るときは、PR の題名に、写した版を「（ai-team-skills <版>）」の形で書く（次の反映の始まりになる）。写す版は、最初にテンプレートを `git -C <テンプレート> fetch origin` し、`origin/main` のコミットを書き留めて決める。その版の中身（`git show` などで読む）から写す（「テンプレートを直した後の反映」の「写す版を決める」）
+
+### 書き換えるところ
+
+承認者の名前やキャラ設定はプラグインの中にあり、リポジトリごとには書き換えられない（更新で上書きされる）。書き換えるなら、このリポジトリをフォークして直し、「導入方法」の1の `rocket-martue/ai-team-skills` を自分のフォークに替える。
+
+- 承認者の名前（まーちゅう）：プラグインの文書・スキル・エージェントだけでなく、フックのコードとテストにも入っている。`git grep まーちゅう` で探して、まとめて替える
+- キャラ設定：`repo-files/docs/team/Ganesha.md`（ガネーシャ）、`plugins/ai-team/agents/mejed.md`（メジェド）、`repo-files/codex/AGENTS.md`（健さん）
+- 会話と文書の言語：`plugins/ai-team/docs/team-rules.md` の「言語」、`repo-files/codex/AGENTS.md`
+- フックの止めるときの文言：`plugins/ai-team/hooks/guard-code-edit.mjs`
+- 直接コードの印を付ける・消す言い方（「ガネーシャが直接コード書いて」など）：`plugins/ai-team/hooks/direct-edit-mark.mjs`
+
+フックを直したら、「このリポジトリで打つチェックコマンド」を全部通す。
 
 ### 写しからプラグインへの切り替え
 
@@ -363,3 +382,7 @@ hub で確かめた（`03bc685` → `f559c20`）。`plugin update` は settings.
   - `git status`・`git show` などの読むだけのコマンドは、allow が無くても通るので確かめにならない。codex スキルを読み込んだ後は、スキルの許可（`allowed-tools`）でラッパーが通るので、これも確かめにならない
   - 確認が出たら、リポジトリを信頼したか（「導入方法」の6。大文字・小文字の両方）を見る。「常に許可」は選ばない（`.claude/settings.local.json` に決まりが書かれ、settings.json の allow が効いていないことが隠れるため）
   - 画面を見なくても、セッションの記録（`<ユーザーのホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の行の `permissionDecision` で分かる。`"source":"config"` で `reasonType` が `rule` か `subcommandResults` なら allow（またはスキルの許可）に当たった。`classifier` なら auto モードの判定で通った（allow に当たったかは分からない）。`"source":"user_temporary"` ならダイアログで通した
+
+## ライセンス
+
+MIT No Attribution（MIT-0）。`LICENSE` を参照。
