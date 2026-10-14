@@ -301,13 +301,21 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 
 ### プラグインの中身（`plugins/ai-team/`）の反映
 
-写さない。各 PC で、次の順に打つ。
+写さない。各 PC で、マーケットプレイスの自動更新をオンにしておく（PC ごとに1回）。セッションで `/plugin` → Marketplaces → `ai-team-skills` → 「Enable auto-update」。自前のマーケットプレイスは、既定ではオフ（[公式ドキュメント](https://code.claude.com/docs/en/plugins/install.md)）。
+
+- 自動更新は、対話のセッションで最初のメッセージを送ってから、ランダムで最大10分後に動く。マーケットプレイスを更新して、そこから入れたプラグインも更新する（[公式ドキュメント](https://code.claude.com/docs/en/plugins/loading.md) の「When auto-update runs」）
+- そのセッションは古い版のまま動き、「Plugin updated … Run /reload-plugins to apply」が出る。新しい版は、`/reload-plugins` の後か、VS Code を開き直した後に効く
+- `--scope project` で入れたものも自動で更新されるかは、確かめているところ（#80）。確かめるまでは、新しい版が入ったかを `installed_plugins.json` の記録（そのリポジトリの project スコープの `gitCommitSha`）で見て、入っていなければ下の手で打つ
+
+すぐに入れたいとき・自動更新をオンにしていない PC では、次の順に手で打つ。
 
 1. `claude plugin marketplace update ai-team-skills`（PC ごとに1回）
 2. プラグインを入れた各リポジトリの根で、`claude plugin update ai-team@ai-team-skills --scope project`（入れたときと同じスコープ。スコープを省くと、今いるプロジェクトの中から探すので、入れていないリポジトリで打つと見つからない）
 3. VS Code を閉じて開き直す
 
 hub で確かめた（`03bc685` → `f559c20`）。`plugin update` は settings.json を書き換えない。
+
+リポジトリ側（下の節）は自動では入らない。プラグインが新しい版になっても、リポジトリ側を反映するまでは、settings.json などは前の版のまま。
 
 ### リポジトリ側（`repo-files/` の中身）の反映
 
