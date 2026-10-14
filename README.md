@@ -64,16 +64,15 @@ Claude Code だけで回す体制のスキル・チーム設定・権限設定�
 
 ### このリポジトリで打つチェックコマンド
 
-テンプレートのリポジトリの根で打つ。
+テンプレートのリポジトリの根で打つ。全部は打たない。触ったファイルに当たるものだけ打つ（`.md` だけの直しなら、打つものは無い）。
 
-```
-node plugins/ai-team/hooks/test-guard-code-edit.mjs
-node plugins/ai-team/hooks/test-session-start.mjs
-node plugins/ai-team/hooks/test-direct-edit-mark.mjs
-node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs
-claude plugin validate .
-claude plugin validate plugins/ai-team
-```
+| 触ったもの | 打つもの |
+| --- | --- |
+| `repo-files/claude/settings.json`・`plugins/ai-team/hooks/guard-code-edit.mjs`・`hooks/ai-team-config.mjs`・`hooks/hooks.json` | `node plugins/ai-team/hooks/test-guard-code-edit.mjs` |
+| `plugins/ai-team/hooks/session-start.mjs`・`plugins/ai-team/docs/team-rules.md`（1万文字の上限） | `node plugins/ai-team/hooks/test-session-start.mjs` |
+| `plugins/ai-team/hooks/direct-edit-mark.mjs`・`hooks/ai-team-config.mjs` | `node plugins/ai-team/hooks/test-direct-edit-mark.mjs` |
+| `plugins/ai-team/skills/codex/scripts/`・`hooks/ai-team-config.mjs` | `node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs` |
+| `.claude-plugin/`・`plugins/ai-team/.claude-plugin/`・スキルやエージェントの追加・名前の変更 | `claude plugin validate .` と `claude plugin validate plugins/ai-team` |
 
 - `claude plugin validate` は、マーケットプレイスとプラグインの形を確かめる。`--strict` は付けない（`version` を書かないので、`--strict` では必ず失敗する）。終了コード 0 で、出ている警告が `version` が無いことだけであること。`claude` が PATH に無ければ、VS Code の拡張の `claude.exe` を使う
 - `claude -p --settings <ファイル>` で試すときは、`enabledPlugins` を含む設定を渡さない（そのプラグインが user スコープに自動で入る）。試しの後は `installed_plugins.json` に user の記録が増えていないか見る
@@ -255,7 +254,7 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 - フックの止めるときの文言：`plugins/ai-team/hooks/guard-code-edit.mjs`
 - 直接コードの印を付ける・消す言い方（「ガネーシャが直接コード書いて」など）：`plugins/ai-team/hooks/direct-edit-mark.mjs`
 
-フックを直したら、「このリポジトリで打つチェックコマンド」を全部通す。
+フックを直したら、「このリポジトリで打つチェックコマンド」の表で、そのフックに当たるものを通す。
 
 ### 写しからプラグインへの切り替え
 
