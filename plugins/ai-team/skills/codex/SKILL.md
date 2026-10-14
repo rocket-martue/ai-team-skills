@@ -18,9 +18,9 @@ allowed-tools:
 | `review` | 読むだけのレビュー（未コミットの変更、または基準ブランチとの差分） | ガネーシャ |
 | `image` | 参照画像を渡して、画像を1枚作る。できた画像はリポジトリに置かない（置くのはメジェド） | メジェド |
 | `save-code-review` | `/code-review` の結果を、健さんの返事と同じ決め方で保存するだけ（codex は呼ばない） | ガネーシャ |
-| `make-patch` | コミットの前の差分を、秘密情報を照らしてからパッチのファイルにするだけ（codex は呼ばない。`/code-review` に渡すため） | ガネーシャ |
+| `make-patch` | コミットの前の差分を、秘密情報を照らしてからパッチのファイルにするだけ（codex は呼ばない。`/code-review` や PR の前の Fさんに渡すため） | ガネーシャ |
 
-adversary（Fable）はこのスキルを使わない（計画書や PR の差分を読む役）。計画の承認前の「壊しに来る役」は、レビューの道（workflow.md の言葉の決まり）で健さんを選んだとき、ガネーシャが `consult` で健さんに頼む（下の「壊しに来る役を頼むとき」）。
+adversary（Fable）はこのスキルを使わない（計画書や PR の前の差分を読む役）。計画の「壊しに来る役」は、レビューの道（workflow.md の言葉の決まり）で健さんを選んだとき、ガネーシャが `consult` で健さんに頼む（下の「壊しに来る役を頼むとき」）。
 
 健さんの設定（キャラ・請け負う範囲）は、各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）にある。見本はテンプレートの `repo-files/codex/AGENTS.md`。
 
@@ -38,7 +38,7 @@ adversary（Fable）はこのスキルを使わない（計画書や PR の差�
    - `-Task` は必須（返事を `docs/tasks/<タスク名>/codex/` に残すため。無ければラッパーが止まる。そこが Git に無視されていないリポジトリでは、返事は一時ディレクトリに残る）
    - `review`：コミット前は何も付けない（`--uncommitted`）。コミット済みを見るときは `git fetch origin` のあと `-Base origin/<既定ブランチ>`（diff-reviewer と同じ基準で比べるため）。`-Base` で呼ぶ前に、`git status --short --branch` で今のブランチが plan.md の「ブランチ」欄と同じか確かめ、違えば呼ばずに保留する（ラッパーは今のブランチ（HEAD）を見るので、別のブランチにいると別の変更を確認してしまうため）。worktree のときは、リポジトリの根で打つとメイン側のブランチを見てしまうので、`git -C <パス> fetch origin`・`git -C <パス> status --short --branch` で確かめる
    - `image`：参照画像は `|` 区切りの1つの文字列で渡す
-   - `make-patch`：コミットの前の差分を、`/code-review` に渡すパッチのファイルにする（`-Mode make-patch -Task <タスク名> -OutFile <scratchpad のファイル>`。`-PromptFile` は要らない。worktree のときは `-WorkingDirectory` も付ける）。できたら `PATCH: <パッチの絶対パス>` と `FILES: <パッチに入ったファイルの数>` が出る。**終了コード 4 は「見せる差分が無い」**（`-OutFile` は書かれない）。呼んだ側は `/code-review` を呼ばずに保留する。ほかの 0 以外は、秘密情報・設定ファイルの確かめや Git の失敗で止まったこと（パッチは作られない）。数秒で終わる（健さんは呼ばないので、Codex の枠も使わない）
+   - `make-patch`：コミットの前の差分を、`/code-review` や PR の前の Fさんに渡すパッチのファイルにする（`-Mode make-patch -Task <タスク名> -OutFile <scratchpad のファイル>`。`-PromptFile` は要らない。worktree のときは `-WorkingDirectory` も付ける）。できたら `PATCH: <パッチの絶対パス>` と `FILES: <パッチに入ったファイルの数>` が出る。**終了コード 4 は「見せる差分が無い」**（`-OutFile` は書かれない）。呼んだ側は `/code-review` を呼ばずに保留する。ほかの 0 以外は、秘密情報・設定ファイルの確かめや Git の失敗で止まったこと（パッチは作られない）。数秒で終わる（健さんは呼ばないので、Codex の枠も使わない）
    - `save-code-review`：`/code-review` の結果の文を書いた一時ファイルを渡して保存する（`-Mode save-code-review -Task <タスク名> -Stage <plan|pr|check> -InputFile <ファイル>`。`-Stage` は承認前（計画書）が `plan`、PR の前が `pr`、チェックが2回以上落ちたとき（K2）が `check`。`-PromptFile` は要らない）。保存先は、リポジトリの中なら `docs/tasks/<タスク名>/code-review/<連番>-<Stage>.md`（メインのチェックアウトの下。`.gitignore` で Git に入れない）、Git に無視されていなければ `<一時ディレクトリ>/code-review-replies/<リポジトリのフォルダ名>-<パスから作った8文字>/<タスク名>/`。出てきた `SAVED:` の行の保存先を、承認前は plan.md の「承認前の確認」に、PR の前と K2 は review.md のその回の「返事：」に書く（簡単な修正の道では PR 本文）。保存先が一時ディレクトリ（絶対パス）なら、OS の一時ディレクトリの部分を `<一時ディレクトリ>` と書く（ローカルの絶対パスやユーザー名を記録に残さないため）。中身はそのまま書く（要約しない）。数秒で終わる（健さんは呼ばないので、Codex の枠も使わない）
    - 1回に数分かかる（相談・レビューで5〜7分ほど）。ラッパーはバックグラウンドで回す（Bash ツールの `run_in_background`。workflow.md の言葉の決まり「バックグラウンド」）。終わりの知らせを受けてから結果を読む
 4. 一時ファイルを消す
@@ -75,13 +75,12 @@ adversary（Fable）はこのスキルを使わない（計画書や PR の差�
 
 ガネーシャが `consult` で頼む。頼みの文は adversary の定義（プラグインの `agents/adversary.md`）と同じ中身にする。自分の結論や見立ては渡さない（先入観を移さないため）。上限と分かれ目は workflow.md。
 
-- **計画のレビュー**（承認前）
+- **計画のレビュー**（計画の段。レビューの道で健さんを選んだとき）
   - 計画書のパス、リポジトリの `docs/team/common-rules.md`、チーム共通の決まり `${CLAUDE_PLUGIN_ROOT}/docs/team-rules.md` と作業の流れ `${CLAUDE_PLUGIN_ROOT}/docs/workflow.md` の場所（スキルとして読み込むと絶対パスになる。健さんは作業の根の外のファイルも読める）
   - 答えの場所の書き方：リポジトリの外のプラグインの文書は `<プラグイン>/docs/workflow.md:NN` の形で書くよう頼む（AGENTS.md の「絶対パスを書かない」と合わせる）
   - 見てほしいこと：外との約束（ほかのリポジトリ・API・データの形・ファイル名）・完了条件の判定・対象外・計画の中の食い違い
   - 報告の形式：指摘ごとに重要度・場所・壊れ方・根拠。見つからなければ1行目に「指摘なし」
   - 「承認前の確認」の節は判断に使わないこと
-  - 2回目からは、「改訂履歴の最後の行が前回の指摘で直したところ。直し方が動くかも確かめる」
 - **直ったのか隠しただけか**（チェックが2回以上落ちたとき）
   - メジェドの報告の「途中で2回以上落ちたチェック」の行
   - 差分の取り方：`git diff HEAD -- . ":(exclude)docs/tasks/<タスク名>/review.md"` と、未追跡のファイルはディレクトリにまとめず `git status --porcelain -uall` で見ること。worktree のときも `-C` は付けない（健さんはラッパーの `-WorkingDirectory` で worktree を作業の根にして動くため。付けると worktree の中の同じパスを探して失敗する）

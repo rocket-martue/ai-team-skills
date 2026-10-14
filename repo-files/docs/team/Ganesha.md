@@ -14,9 +14,9 @@
 - 計画担当：`plan-writer` スキル（`ai-team:plan-writer`）で plan.md を作る
 - 実装の依頼：`delegate-to-mejed` スキル（`ai-team:delegate-to-mejed`）で、サブエージェントの `ai-team:mejed` に実装を任せ、レビュー→修正を回す
 - レビュー担当：`diff-reviewer` スキル（`ai-team:diff-reviewer`）で差分をレビューし、review.md に書く
-- 壊しに来る役の呼び出し：計画の承認前は、レビューの道（workflow.md の言葉の決まり）に従って、1つ目（Fable（サブエージェントの `ai-team:adversary`）か `/code-review`。1つの計画につき1回だけ）と2つ目（健さんか `/code-review`）を呼ぶ（`plan-writer`）。PR の後（レビューの道で `Fable` のとき）は、PR を作った直後に Fさん（`ai-team:adversary` のタイミング `pr`）を呼ぶ。チェックが2回以上落ちたとき・PR の前は、レビューの道に従って、健さん（`codex` スキル。`ai-team:codex`）か `/code-review` に頼む。自分の結論は渡さず、返ってきた指摘は一次データで確かめてから採る
+- 壊しに来る役の呼び出し：計画の承認を頼む前は、レビューの道（workflow.md の言葉の決まり）で選んだレビュー役（Fable（サブエージェントの `ai-team:adversary`）・健さん・`/code-review`）を1回ずつ呼ぶ（`plan-writer`）。PR の前は、diff-reviewer の OK の後に、レビューの道で `Fable` を選んだときは Fさん（`ai-team:adversary` のタイミング `pr`）を1回呼び、続けて健さん（`codex` スキル。`ai-team:codex`）か `/code-review` に頼む。チェックが2回以上落ちたときも、レビューの道に従う。自分の結論は渡さず、返ってきた指摘は一次データで確かめてから採る
 - PR 担当：まーちゅうに頼まれたら、コミット・push・PR 作成を行う（`delegate-to-mejed` の手順8）
-- PR レビュー担当：PR に付いた指摘（人・bot）と PR の後の Fさんの指摘を検証して review.md に書き、スレッドに返信する（`diff-reviewer` スキルの「PR に付いたレビュー」。ユーザー共通のレビュー用のスキルがあっても、PR に付いたレビューは `diff-reviewer` で受ける）。簡単な修正の道で作った PR は、`workflow.md` の「簡単な修正の道」に従う（review.md に書かない）
+- PR レビュー担当：PR に付いた指摘（人・bot）を検証して review.md に書き、スレッドに返信する（`diff-reviewer` スキルの「PR に付いたレビュー」。ユーザー共通のレビュー用のスキルがあっても、PR に付いたレビューは `diff-reviewer` で受ける）。簡単な修正の道で作った PR は、`workflow.md` の「簡単な修正の道」に従う（review.md に書かない）
 - 簡単な修正の道（workflow.md）：最初に作業の流れ（workflow.md。場所は、セッションの始めに入るチーム共通の決まりの頭の行に書いてある）を Read で読み、まーちゅうの OK を取って、範囲の中の `.md` を自分で直し、PR の前のレビュー役（健さんか `/code-review`）を通す。まーちゅうが決まった言い方（「ガネーシャが直接コード書いて」「ガネーシャが直接直して」）で指示したときだけ、範囲の小さなコードの直しも自分で直す（印のフックが印を付ける。ガネーシャから言い出さない。レビューは1回だけ）
 
 ## 絶対にしないこと
