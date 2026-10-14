@@ -157,21 +157,16 @@ claude plugin validate plugins/ai-team
 
 | 操作 | 扱い |
 | --- | --- |
-| `git diff` / `log` / `status` / `show`、`git remote get-url`、`gh pr list`（`ls`） / `view` / `diff` / `checks` / `status`（読むだけ） | 許可 |
-| `git add` / `commit` / `push` / `switch`、`gh pr create`（`new`） / `edit` / `comment` / `close` / `reopen` / `ready` / `review` / `checkout`（`co`） / `revert` / `lock` / `unlock` / `update-branch`、フラグがサブコマンドの前にある `gh pr`（`gh pr -R … create` など） | 確認付き（まーちゅうに頼まれたときだけガネーシャが行う） |
-| `git pull` | 確認付き（`--ff-only` を付けないと merge コミットを作れて、`git merge` の禁止をすり抜けるため、許可には置かない。マージの後は `--ff-only` を付けて使う。確認のダイアログで `--ff-only` が付いているかを見られる） |
-| `git stash` / `restore` / `clean` / `rm` / `worktree remove`、`git branch`（引数の有無を問わず全部） | 確認付き（コミット前の作業か、マージ前のブランチを消せるため。ブランチの削除は `-fD`・`-f -d`・`--force --delete` のように書き方がいくつもあってルールの形で潰しきれないので、`git branch` は全部確認にする。ブランチの名前は `git status` で分かる） |
-| `git -C` / `-c` / `--git-dir` / `--work-tree` / `--no-pager` で始まる git | 確認付き（deny は先頭一致なので、大域オプションで始まると `git reset` などの禁止をすり抜けるため。「worktree で作業するとき」を参照） |
-| `git checkout` / `merge` / `rebase` / `reset`、`gh pr merge` | 禁止 |
+| `git diff` / `log` / `status` / `show`、`git fetch origin`、`git remote get-url`、`gh repo view`、`gh pr list`（`ls`） / `view` / `diff` / `checks` / `status`（読むだけ） | 許可（allow） |
+| `git checkout` / `merge` / `rebase` / `reset`、`gh pr merge` | 禁止（deny） |
+| それ以外（`git add` / `commit` / `push` / `switch` / `pull` / `branch` / `stash` / `clean`、`gh pr create` など） | 決まりを置かない。Manual では確認が出る。Auto では判定器が見る |
+
+ask は置かない。Manual では、どの決まりにも当たらないコマンドは確認が出るので、ask を足しても変わらない。Auto では、ask は確認を出させるが、書き込む git や `gh pr` を1つずつ並べる決まりは漏れやすく、直すたびに各リポジトリへの反映が要っていた。止めなければならないもの（マージ・履歴の書き換え）は deny に置き、コミット・push・PR は「頼まれたときだけ」（Ganesha.md）で守る。
+
+- Auto では、`git push`・`gh pr create`・`git branch -D`・`git clean` などが確認なしで通りうる（判定器が止めることもある）。PR を作っても、マージは deny なのでガネーシャはできない
+- deny は先頭一致なので、`git -C <パス> reset --hard` のように大域オプションで始まると `Bash(git reset:*)` に当たらない。Manual では確認が出る。Auto では判定器が見る
 
 同じルールを、PowerShell ツールにも `PowerShell(...)` の形で付けている（Bash のルールは PowerShell ツールには効かないため。allow は、読むだけの `gh pr`（別名の `ls` を入れて6つ）と `git remote get-url` だけ PowerShell にも足していて、ほかの allow は Bash にだけ置いている）。
-
-`gh pr` を書き込むサブコマンドごとに ask に分けているのは、ask が allow より先に見られるため（決まりの細かさでは順番が変わらない）。読むだけの `gh pr` を allow に置くには、ask をサブコマンドごとに分けるしかない。
-
-- 分けた ask から漏れた書き方は、Manual では確認が出るが、auto モードでは判定器に回る。漏れるのは、gh に後から足されたサブコマンドと、決まりの文字列に当たらない書き方（引用符つきの `gh pr "create"`、空白が2つの `gh pr  create` など）。gh を更新して `gh pr` にサブコマンドや別名が増えたら、allow か ask のどちらかに振り分ける（別名は各サブコマンドの `--help` の「ALIASES」に出る）
-- フラグがサブコマンドの前にある `gh pr -R … create` は、`gh pr -*` で確認にしている
-- 読むだけのサブコマンドでも、`--web`（ブラウザを開く）と `gh pr checks --watch`（チェックが終わるまで戻らない）は、ローカルの副作用はあるが、確認なしで通る。限界として承知する
-- gh のエイリアス `gh co`（`gh pr checkout`）は `gh pr` で始まらないので、この決まりに当たらない（前からの穴。gh の大域のエイリアスは、決まりでは押さえていない）
 
 メジェドは git に書き込まない（mejed.md の禁止事項）。マージはまーちゅうが行う。
 
@@ -216,9 +211,9 @@ GitHub Projects のボードを使うなら、ユーザー側の手順で動か�
 - worktree を作るのは gh-issue スキル（まーちゅうに頼まれたとき）だけ。置き場所はリポジトリの中の `.claude/worktrees/<名前>/`。plan-writer・delegate-to-mejed は worktree もブランチも作らない。使わないときは、今のまま（作業ツリーで `git switch -c`）
 - worktree のパス（`.claude/worktrees/<名前>`）は、メジェド・健さん・スキルどうしで渡すとき、リポジトリの根からの相対パスで書く（まーちゅうへの返事のパスは、plan-writer の手順7のとおり。Git Bash の `/c/...` 形は Node.js と PowerShell で別のパスになるため）
 - plan.md も review.md も worktree の中の `docs/tasks/<タスク名>/` に書く（メインのチェックアウトの未コミットのファイルは worktree から見えないため）
-- git は `git -C <パス>`（`git remote get-url origin` だけは例外で、`-C` を付けない。remote は worktree と共通で、`-C` を付けると ask に当たるため）。ほかのコマンド（チェックコマンドなど）は `(cd <パス> && <コマンド>)`。健さんのラッパーは `-WorkingDirectory <パス>`（返事はメインのチェックアウトの `docs/tasks/<タスク名>/codex/` に残る。そこが Git に無視されていなければ、一時ディレクトリに残る。codex スキルの「ラッパーがしてくれること」）
+- git は `git -C <パス>`（`git remote get-url origin` だけは例外で、`-C` を付けない。remote は worktree と共通で、`-C` を付けると allow に当たらないため）。ほかのコマンド（チェックコマンドなど）は `(cd <パス> && <コマンド>)`。健さんのラッパーは `-WorkingDirectory <パス>`（返事はメインのチェックアウトの `docs/tasks/<タスク名>/codex/` に残る。そこが Git に無視されていなければ、一時ディレクトリに残る。codex スキルの「ラッパーがしてくれること」）
 - フックは `.claude/worktrees/<名前>/` の頭を剥がして、メインのチェックアウトと同じ判定をする。秘密情報の判定だけは、剥がす前のパスにも当てる
-- settings.json の `deny` は先頭一致なので、`git -C <パス> reset --hard` は `Bash(git reset:*)` に当たらない。そこで ask に大域オプションで始まる git（`git -C`・`git -c`・`git --git-dir`・`git --work-tree`・`git --no-pager`）を足してある。**worktree での git は毎回確認が出る**（`git remote get-url origin` を除いて。手間として受け入れる）。この柵は、うっかり別の書き方で打つのを止めるもの。`sh -c '...'` で包む・パスで git を呼ぶなど、わざと別の形にするものは防がない（サンドボックスの役目）
+- `git -C <パス>` で始まる git は allow に当たらないので、Manual では worktree での git は毎回確認が出る（`git remote get-url origin` を除いて。手間として受け入れる）。deny は先頭一致なので、`git -C <パス> reset --hard` は `Bash(git reset:*)` に当たらない（「git の権限」）
 
 ## 導入方法
 
