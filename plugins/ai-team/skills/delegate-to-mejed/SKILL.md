@@ -16,8 +16,8 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
 2. 作業ツリーを確かめる。**タスクは1本ずつ。**
    - `git status --short --branch` で、別タスクの未コミットの変更が無いことを確かめる。あれば止めて、まーちゅうに報告する（plan.md と review.md だけなら、このタスクのものか確かめる。簡単な修正の道から移ってきた直しで、plan.md の対象ファイルに書いてあるものも同じ）
    - `git fetch origin` で最新にする（worktree のときは `git -C <パス> fetch origin`）
-   - 既定のブランチと `<owner>/<name>` を、origin を引数にして求める：`gh repo view "$(git remote get-url origin)" --json defaultBranchRef,nameWithOwner`（環境変数 `GH_REPO` があっても origin と食い違わないようにするため。worktree のときは `git -C <パス> remote get-url origin`）。手順8の `gh pr create` で両方の値が要る
-   - **worktree で作業するとき（次の「ブランチを切る」の代わりに）**（plan.md が `.claude/worktrees/<名前>/docs/tasks/<タスク名>/` にあるなど、gh-issue が worktree を用意している）：その `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）を作業ツリーとする。worktree もブランチもここでは作らず、`git switch -c` はしない。git は `git -C <パス>` で打ち（`git status --short --branch` も同じ）、ほかのコマンドは `(cd <パス> && <コマンド>)` で打つ。`git -C` は settings.json の ask で毎回確認が出る
+   - 既定のブランチと `<owner>/<name>` を、origin を引数にして求める。2回に分ける：まず `git remote get-url origin` で URL を求め（cwd がメインのチェックアウトでも worktree でも、そのまま打つ。`git -C` は付けない。worktree は同じ remote の設定を持つため）、その URL を引数に `gh repo view <URL> --json defaultBranchRef,nameWithOwner` を打つ。`$(...)` でつながない理由は、中身を打つ前に確かめられないので、allow に関係なく確認が出るため（環境変数 `GH_REPO` があっても origin と食い違わないようにするため、origin を引数にする）。`extensions.worktreeConfig` で worktree ごとに remote を変えていない前提。手順8の `gh pr create` で両方の値が要る
+   - **worktree で作業するとき（次の「ブランチを切る」の代わりに）**（plan.md が `.claude/worktrees/<名前>/docs/tasks/<タスク名>/` にあるなど、gh-issue が worktree を用意している）：その `.claude/worktrees/<名前>`（リポジトリの根からの相対パス）を作業ツリーとする。worktree もブランチもここでは作らず、`git switch -c` はしない。git は `git -C <パス>` で打ち（`git status --short --branch` も同じ）、ほかのコマンドは `(cd <パス> && <コマンド>)` で打つ。`git -C` は settings.json の ask で毎回確認が出る。ただし `git remote get-url origin` だけは例外で、`-C` を付けずに打つ（remote は worktree と共通のため。`-C` を付けると ask に当たる）
    - ブランチを切る。plan.md の「ブランチ」欄の名前（`<ブランチ>`）で切る。メジェドへの実装の依頼には、このブランチを切ることが含まれる（まーちゅうに別に頼まれなくてよい）
      - `git switch -c <ブランチ> --no-track origin/<既定ブランチ>`（`--no-track` が無いと追跡先が既定のブランチになり、引数なしの `git push` が失敗するか既定のブランチへ送ってしまうため）。既にあれば、それに切り替えてよいかまーちゅうに確認する
 3. `ai-team:mejed` サブエージェントに実装を頼む。渡すのは次の3つだけにする（会話の経緯や自分の実装案は渡さない）
@@ -61,9 +61,9 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
 
 まーちゅうに「マージした」と言われたら、既定のブランチを origin に追いつかせる。これは頼まれたことに含まれる。worktree・ブランチの削除より先に行う（今のブランチを消そうとすると失敗するため）。片付けとイシューの扱いは、この節では決めない（ユーザー側の手順に任せる）。
 
-メインのチェックアウト（リポジトリの根）で、**Bash ツールで**次の順に打つ（allow は Bash にだけあるため。PowerShell ツールでは allow のコマンドも確認が出る）。
+メインのチェックアウト（リポジトリの根）で、**Bash ツールで**次の順に打つ（`gh repo view`・`git fetch origin`・`git status` の allow は Bash にだけあるため。`gh pr view`・`git remote get-url` は PowerShell にもあるが、全部を Bash でそろえる）。
 
-1. `gh repo view "$(git remote get-url origin)" --json defaultBranchRef,nameWithOwner` で、既定のブランチと `<owner>/<name>` を求め直す（「マージした」は PR を作ったのと別のセッションで言われることが多く、手順2の値が手元に無いため。`main` と決め打ちしない）
+1. `git remote get-url origin` で origin の URL を求め、その URL を引数に `gh repo view <URL> --json defaultBranchRef,nameWithOwner` で、既定のブランチと `<owner>/<name>` を求め直す（2回に分ける。`$(...)` でつなぐと、中身を打つ前に確かめられないので確認が出るため。「マージした」は PR を作ったのと別のセッションで言われることが多く、手順2の値が手元に無いため。`main` と決め打ちしない）
 2. 言われた PR が、このセッションで作った PR か、まーちゅうの言葉にリポジトリ名・URL があればそれが `<owner>/<name>` と同じかを確かめる。どちらでもない・分からないときは、何も触らずにまーちゅうに聞く（別のリポジトリ宛ての合図のことがあるため）
 3. `gh pr view <番号> --repo <owner>/<name> --json state,baseRefName` で、`state` が `MERGED`、`baseRefName` が既定のブランチであることを確かめる。違えば、何も触らずにまーちゅうに聞く
 4. `git fetch origin`
@@ -74,7 +74,7 @@ description: 承認済みの plan.md の実装を、サブエージェントの�
 
 - `git merge`・`git reset`・`git checkout` は deny なので使わない。`git pull` には `--ff-only` を必ず付ける（付けないと merge コミットを作れるため。だから allow ではなく ask に置いている）
 - `git pull --ff-only` が失敗したら（早送りできない）、それ以上は打たずに止まって、まーちゅうに報告する
-- `gh pr view`・`git switch`・`git pull` は ask で、確認が出る。`gh repo view`・`git fetch origin`・`git status` は allow
+- `git switch`・`git pull` は ask で、確認が出る。`gh pr view`・`gh repo view`・`git remote get-url`・`git fetch origin`・`git status` は allow
 - 確認を待つ間に別のセッションがメインのチェックアウトを切り替えると、そのブランチが早送りされる。これは防げない限界として受け入れ、手順8で見つけて止まる
 
 **保留**：止まって、まーちゅうに判断を頼むこと。理由（メジェドの停止の理由・達した上限・該当する指摘）を添える。保留の後の進め方（計画の改訂・修正の追加など）は、まーちゅうの指示で決める。止まったところから勝手に進めない。承認をやり直したら、回数の上限は数え直す（workflow.md の「回数の上限」）。
