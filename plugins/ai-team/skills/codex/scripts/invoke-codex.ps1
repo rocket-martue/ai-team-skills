@@ -1,6 +1,7 @@
 ﻿# invoke-codex.ps1
 # Claude Code（ガネーシャ・メジェド）から Codex CLI（健さん）を呼ぶラッパー。
 # モードは consult（読むだけの相談）・review（読むだけのレビュー）・image（画像の生成）の3つだけ。
+# と、codex を呼ばない check（秘密情報と設定ファイルの確かめだけ。allow が効くかを、Codex の枠を使わずに確かめるため）。
 # 実装（ファイルの書き換え）は頼まない。sandbox は常に read-only。返事は標準出力に出すだけで、保存しない。
 #
 # 呼び方（リポジトリの根から、Bash ツールで）:
@@ -11,7 +12,7 @@
 [CmdletBinding()]
 param(
 	[Parameter(Mandatory = $true)]
-	[ValidateSet('consult', 'review', 'image')]
+	[ValidateSet('consult', 'review', 'image', 'check')]
 	[string] $Mode,
 
 	# 頼みの文のファイル（consult・image で必須。review では使わない）
@@ -45,7 +46,7 @@ function Stop-Wrapper {
 
 # ---- 呼ぶ前の確認 ----
 
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+if ($Mode -ne 'check' -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
 	Stop-Wrapper 'codex が PATH にありません。npm install -g @openai/codex で入れて、codex login を打ってから呼んでください。'
 }
 
@@ -81,7 +82,7 @@ function Get-MainRoot {
 }
 
 $Prompt = ''
-if ($Mode -ne 'review') {
+if ($Mode -ne 'review' -and $Mode -ne 'check') {
 	if ([string]::IsNullOrWhiteSpace($PromptFile) -or -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) {
 		Stop-Wrapper "頼みの文のファイル（-PromptFile）が見つかりません: $PromptFile"
 	}
@@ -185,6 +186,12 @@ if ($checkCode -ne 0) {
 # 終了コード 0 でも、共有モジュールが印を書いていなければ、確かめが済んだか分からない（リンク経由の起動で何もせずに終わった場合など）
 if (($checkOut -split "`n" | Select-Object -First 1).Trim() -ne 'ai-team-config: ok') {
 	Stop-Wrapper '秘密情報と設定ファイルの確かめが済んだか分からないので、健さんを呼びません（共有モジュールが印を返しませんでした）。'
+}
+
+# ---- check：ここまでの確かめだけで終わる（codex は呼ばない） ----
+if ($Mode -eq 'check') {
+	Write-Output 'CHECK: ok（設定ファイルを読めた。健さんは呼んでいない）'
+	exit 0
 }
 
 # 一時ディレクトリ（終わったら消す）

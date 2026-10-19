@@ -549,6 +549,39 @@ for (const mode of ['save-code-review', 'make-patch']) {
 	}
 }
 
+// check：確かめだけで終わり、codex を呼ばない。設定ファイルが壊れていれば止まる
+function runCheck(ctx) {
+	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'check', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', called: fs.existsSync(ctx.mark) };
+}
+{
+	const name = 'check: 確かめだけで終わり、CHECK: ok を出し、健さんを呼ばない';
+	try {
+		const ctx = makeRepo();
+		ctx.write('.claude/ai-team.json', j({ secretPatterns: [], plannerWritable: [] }));
+		commitAll(ctx.git, 'init');
+		ctx.write('.env', 'S=1\n');
+		const tempBefore = listTemp();
+		const r = runCheck(ctx);
+		const ok = r.code === 0 && !r.called && /^CHECK: ok/m.test(r.stdout) && listTemp() === tempBefore;
+		report(name, ok, `(code=${r.code} called=${r.called} stdout=${r.stdout.trim().slice(0, 200)} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+{
+	const name = 'check: 設定ファイルが壊れていれば止まり、健さんを呼ばない';
+	try {
+		const ctx = makeRepo();
+		ctx.write('.claude/ai-team.json', '{ not json');
+		commitAll(ctx.git, 'init');
+		const r = runCheck(ctx);
+		report(name, r.code !== 0 && !r.called && r.stderr.includes('壊れている') && !/^CHECK:/m.test(r.stdout), `(code=${r.code} called=${r.called} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+
 // 古い呼び方の互換：-Task を渡されても止めず、何も保存しない
 {
 	const name = '返事: 古い呼び方（-Task 付き）でも review が通り、何も保存しない';
