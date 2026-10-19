@@ -99,17 +99,19 @@ if ($Mode -ne 'review' -and $Mode -ne 'check') {
 $GitPaths = @()
 if ($Mode -eq 'review') {
 	# git status の -uall: 未追跡のディレクトリを1行にまとめず、中のファイルまで出す。-z: 空白や日本語のパスを引用符で囲まない
+	# --ignore-submodules=none: submodule.<名前>.ignore・diff.ignoreSubmodules の設定があっても、サブモジュールの変更を拾う。
+	# 健さんに渡るものにサブモジュールが入るかは外から確かめられないので、照らす側は多めに拾う（#60）
 	Push-Location -LiteralPath $RepoRoot
 	try {
 		$previous = $ErrorActionPreference
 		$ErrorActionPreference = 'Continue'
-		$status = (& git status --porcelain -z -uall 2>$null) -join "`n"
+		$status = (& git status --porcelain -z -uall --ignore-submodules=none 2>$null) -join "`n"
 		$gitCode = $LASTEXITCODE
 		$diffNames = ''
 		$diffCode = 0
 		if (-not [string]::IsNullOrWhiteSpace($Base)) {
 			# --no-renames: 名前を変えたファイルを「元の名前の削除」と「新しい名前の追加」に分け、両方のパスを出させる
-			$diffNames = (& git diff --name-only --no-renames -z "$Base...HEAD" -- 2>$null) -join "`n"
+			$diffNames = (& git diff --name-only --no-renames -z --ignore-submodules=none "$Base...HEAD" -- 2>$null) -join "`n"
 			$diffCode = $LASTEXITCODE
 		}
 		$ErrorActionPreference = $previous
