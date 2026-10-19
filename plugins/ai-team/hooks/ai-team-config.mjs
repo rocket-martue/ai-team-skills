@@ -21,9 +21,19 @@ export const CONFIG_CANDIDATES = ['.claude/ai-team.json', 'repo-files/claude/ai-
 // 確かめが済んだときに --out の1行目へ書く印（ラッパーが読む）
 export const OK_MARK = 'ai-team-config: ok';
 
+// グロブの配列を持つキー。
 // plannerWritable は、ガネーシャが確認なしで編集できるパスを足すキーだった（team-slim で使わなくなった）。
 // 導入済みのリポジトリの .claude/ai-team.json に残っていても止めないよう、形だけ確かめて読み捨てる。
-const CONFIG_KEYS = ['secretPatterns', 'plannerWritable'];
+const GLOB_KEYS = ['secretPatterns', 'plannerWritable'];
+
+// 知っているキー（グロブの配列と、呼び名の対応）。
+const CONFIG_KEYS = [...GLOB_KEYS, 'names'];
+
+// 呼び名を変えられる、既定の名前（names のキー）。文書の中の名前は、この既定の名前で書いてある。
+export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう'];
+
+// 呼び名の長さの上限（文字数）。
+const NAME_MAX_LENGTH = 40;
 
 // Windows のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
 // パターンとの照合も包含の判定も、Windows では小文字にそろえてから行う。
@@ -146,15 +156,18 @@ function parseConfig(buffer) {
 		throw new Error('最上位がオブジェクトではありません');
 	}
 
+	// 知らないキーは読み捨てる（これより後の版でキーを足しても、古い版で止まらないため）。
+	// ただし、知っているキーの打ち間違いに見えるキーは壊れている（secretPattern・secret_patterns・SecretPatterns などで、
+	// 秘密情報の守りが黙って消えないため）。記号を除いて小文字にそろえたものが、知っているキーと同じか、2文字以内の違いなら打ち間違いとみる。
 	for (const key of Object.keys(data)) {
-		if (!CONFIG_KEYS.includes(key)) {
-			throw new Error(`知らないキーがあります（使えるのは ${CONFIG_KEYS.join('・')} だけ。大文字小文字は区別します）`);
+		if (!CONFIG_KEYS.includes(key) && CONFIG_KEYS.some((known) => looksLikeTypo(key, known))) {
+			throw new Error(`知っているキーの打ち間違いに見えるキーがあります（使えるのは ${CONFIG_KEYS.join('・')}。大文字小文字も区別します）`);
 		}
 	}
 
-	const result = {};
+	const result = { names: parseNames(data.names) };
 
-	for (const key of CONFIG_KEYS) {
+	for (const key of GLOB_KEYS) {
 		const value = data[key];
 
 		if (value === undefined) {
@@ -186,10 +199,80 @@ function parseConfig(buffer) {
 	return result;
 }
 
+// キー（key）が、知っているキー（known）の打ち間違いに見えるか。
+// 記号を除いて小文字にそろえたものどうしが同じか、編集距離（足す・消す・置き換えるの回数）が2以内なら真。
+function looksLikeTypo(key, known) {
+	const fold = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+	const a = fold(key);
+	const b = fold(known);
+
+	if (a === b) {
+		return true;
+	}
+
+	if (Math.abs(a.length - b.length) > 2) {
+		return false;
+	}
+
+	let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+
+	for (let i = 1; i <= a.length; i++) {
+		const cur = [i];
+
+		for (let j = 1; j <= b.length; j++) {
+			cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+		}
+
+		prev = cur;
+	}
+
+	return prev[b.length] <= 2;
+}
+
+// names（呼び名の対応）を確かめる。無ければ空のオブジェクト。壊れていれば Error を投げる。
+// 中身（呼び名）は、止める理由に入れない（設定ファイルの中身を出さない決まりに合わせる）。
+function parseNames(value) {
+	if (value === undefined) {
+		return {};
+	}
+
+	if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('names がオブジェクトではありません');
+	}
+
+	const names = {};
+
+	for (const [key, name] of Object.entries(value)) {
+		if (!DEFAULT_NAMES.includes(key)) {
+			throw new Error(`names に知らない名前のキーがあります（使えるのは ${DEFAULT_NAMES.join('・')}）`);
+		}
+
+		if (typeof name !== 'string' || name.trim() === '') {
+			throw new Error('names の呼び名が空か、文字列ではありません');
+		}
+
+		// 改行・制御文字（C0・DEL・C1（U+0085 など）・U+2028・U+2029）は、SessionStart で文脈に入れる1行を崩すので受けない。
+		if ([...name].some((c) => { const n = c.codePointAt(0); return n < 0x20 || (n >= 0x7f && n <= 0x9f) || n === 0x2028 || n === 0x2029; })) {
+			throw new Error('names の呼び名に改行か制御文字があります');
+		}
+
+		// 長さは、前後の空白を取った後（文脈に入れる値）で数える。
+		const trimmed = name.trim();
+
+		if ([...trimmed].length > NAME_MAX_LENGTH) {
+			throw new Error(`names の呼び名が ${NAME_MAX_LENGTH} 文字を超えています`);
+		}
+
+		names[key] = trimmed;
+	}
+
+	return names;
+}
+
 // 設定ファイルを読む。candidates は絶対パスの一覧で、前から順に見て、最初に「ある」ものを読む。
 // 結果は次のどれか。
 // - { status: 'none' }                                          … どの候補も無い（既定の一覧だけで動く）
-// - { status: 'ok', file, secretRegexps }                       … 読めた
+// - { status: 'ok', file, secretRegexps, names }                … 読めた（names は呼び名の対応。無ければ {}）
 // - { status: 'broken', file, reason, link }                    … 壊れている。link は「リンク切れ」のとき真
 // 設定ファイルか親のディレクトリがリンクで、リンク先が無いときは、「無い」ではなくリンク切れとして止める
 // （足したパターンが黙って消えないため）。
@@ -219,7 +302,7 @@ export function readConfig(candidates, lstat = lstatSync) {
 		try {
 			const parsed = parseConfig(readFileSync(file));
 
-			return { status: 'ok', file, secretRegexps: parsed.secretPatterns };
+			return { status: 'ok', file, secretRegexps: parsed.secretPatterns, names: parsed.names };
 		} catch (e) {
 			return { status: 'broken', file, reason: e.message, link: false };
 		}

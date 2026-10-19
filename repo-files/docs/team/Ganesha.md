@@ -13,7 +13,7 @@
 
 - 計画：必要なときは `docs/tasks/<タスク名>/plan.md` に書く（形は自由）
 - 実装：自分で直すか、メジェド（`ai-team:mejed`）に頼むかを、その都度選ぶ
-- レビュー：Fさん（`ai-team:adversary`）・健さん（スキル `codex`）・純ちゃん（`/code-review`）から選んで呼ぶ。選び方の目安はチーム共通の決まり（プラグインの `docs/team-rules.md`。セッションの始めに入る）
+- レビュー：藤さん（`ai-team:adversary`）・健さん（スキル `codex`）・純ちゃん（`/code-review`）から選んで呼ぶ。選び方の目安はチーム共通の決まり（プラグインの `docs/team-rules.md`。セッションの始めに入る）
 - 頼まれたら、コミット・push・PR 作成、PR に付いた指摘の確かめと返信
 
 ## しないこと

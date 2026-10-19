@@ -196,10 +196,40 @@ try {
 		run('互換: plannerWritable に中身があっても、ほかの編集は今までどおり', { file: p('src', 'a.php') }, 0);
 	});
 
+	// 知らないキーは読み捨てる（これより後の版でキーを足しても止めない）
+	withConfig(j({ secretPatterns: ['**/.wrangler/**'], futureKey: { a: 1 } }), () => {
+		run('先の版: 知らないキーがあっても、コードは通る', { file: p('src', 'a.php') }, 0);
+		run('先の版: 知らないキーがあっても、secretPatterns は効く', { file: p('.wrangler', 'x') }, 2);
+	});
+
+	// 呼び名の対応（names。#46）：正しければ、ガードの動きは今までどおり
+	withConfig(j({ secretPatterns: [], names: { ガネーシャ: 'アヤ', メジェド: 'ハナコ', 健さん: 'ケン', 藤さん: 'エフ', 純ちゃん: 'ジュン', まーちゅう: 'ゆう' } }), () => {
+		run('呼び名: names が正しければ、コードは通る', { file: p('src', 'a.php') }, 0);
+		run('呼び名: names が正しくても、.env は止まる', { file: p('.env') }, 2);
+	});
+	withConfig(j({ names: {} }), () => {
+		run('呼び名: names が空のオブジェクトでも通る', { file: p('src', 'a.php') }, 0);
+	});
+	withConfig(j({ names: { メジェド: ` ${'あ'.repeat(40)} ` } }), () => {
+		run('呼び名: 前後の空白を除いて40文字なら通る（長さは空白を取った後で数える）', { file: p('src', 'a.php') }, 0);
+	});
+
 	// 壊れているとき：設定ファイル自体のほかは、すべての編集を止める
 	const broken = [
 		['JSON として壊れている', '{ not json'],
-		['知らないキー（大文字小文字違い）', j({ SecretPatterns: [] })],
+		['知っているキーと大文字小文字だけ違う（SecretPatterns）', j({ SecretPatterns: [] })],
+		['知っているキーと大文字小文字だけ違う（Names）', j({ Names: { メジェド: 'ハナコ' } })],
+		['知っているキーの打ち間違い（secretPattern。s 抜け）', j({ secretPattern: ['**/.wrangler/**'] })],
+		['知っているキーの打ち間違い（secret_patterns）', j({ secret_patterns: ['**/.wrangler/**'] })],
+		['知っているキーの打ち間違い（secretsPatterns）', j({ secretsPatterns: ['**/.wrangler/**'] })],
+		['names が配列', j({ names: ['ハナコ'] })],
+		['names に知らない名前のキー', j({ names: { だれか: 'x' } })],
+		['names の呼び名が空', j({ names: { メジェド: ' ' } })],
+		['names の呼び名が文字列でない', j({ names: { メジェド: 1 } })],
+		['names の呼び名に改行', j({ names: { メジェド: 'ハナ\nコ' } })],
+		['names の呼び名に U+2028', j({ names: { メジェド: `ハナ${String.fromCharCode(0x2028)}コ` } })],
+		['names の呼び名に U+0085（C1 制御文字）', j({ names: { メジェド: `ハナ${String.fromCharCode(0x85)}コ` } })],
+		['names の呼び名が 41 文字', j({ names: { メジェド: 'あ'.repeat(41) } })],
 		['文字列の配列でない（文字列）', j({ secretPatterns: 'x' })],
 		['文字列の配列でない（数）', j({ secretPatterns: [1] })],
 		['plannerWritable が配列でない', j({ plannerWritable: 'x' })],

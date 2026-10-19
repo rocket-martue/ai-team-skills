@@ -24,8 +24,9 @@ function check(name, ok) {
 	console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}`);
 }
 
-function call(hook) {
-	const result = spawnSync(process.execPath, [hook], { input: '{}', encoding: 'utf8' });
+// project：リポジトリの根（CLAUDE_PROJECT_DIR）。既定は .claude/ai-team.json が無い仮のリポジトリ（呼び名の対応は入らない）
+function call(hook, project = emptyProject) {
+	const result = spawnSync(process.execPath, [hook], { input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: project } });
 	let parsed = null;
 	try {
 		parsed = JSON.parse(result.stdout);
@@ -39,12 +40,23 @@ function call(hook) {
 
 // 仮の置き場所：<sandbox>/<name>/hooks/session-start.mjs と <sandbox>/<name>/docs/team-rules.md
 const sandbox = mkdtempSync(path.join(tmpdir(), 'session-start-test-'));
+const emptyProject = path.join(sandbox, 'empty-project');
+mkdirSync(emptyProject, { recursive: true });
+
+// 仮のリポジトリに .claude/ai-team.json を書いて、その根を返す
+function project(name, config) {
+	const root = path.join(sandbox, name);
+	mkdirSync(path.join(root, '.claude'), { recursive: true });
+	writeFileSync(path.join(root, '.claude', 'ai-team.json'), config, 'utf8');
+	return root;
+}
 
 function fake(name, rules) {
 	const root = path.join(sandbox, name);
 	mkdirSync(path.join(root, 'hooks'), { recursive: true });
 	mkdirSync(path.join(root, 'docs'), { recursive: true });
 	copyFileSync(realHook, path.join(root, 'hooks', 'session-start.mjs'));
+	copyFileSync(path.join(here, 'ai-team-config.mjs'), path.join(root, 'hooks', 'ai-team-config.mjs'));
 	if (rules !== null) {
 		writeFileSync(path.join(root, 'docs', 'team-rules.md'), rules, 'utf8');
 	}
@@ -100,6 +112,58 @@ try {
 	const justFit = fake('edge-fits', 'x'.repeat(MAX_LENGTH - headerLength));
 	const justFitResult = call(justFit.hook);
 	check('境目の内側（全体がちょうど1万文字）: 中身が入る', justFitResult.context.length === MAX_LENGTH && justFitResult.context.includes('xxxx'));
+
+	// ---- 呼び名の対応（.claude/ai-team.json の names。#46） ----
+	const NAMES_HEAD = 'このリポジトリの呼び名：';
+	check('呼び名：設定ファイルが無ければ、対応の行は入らない', !actual.context.includes(NAMES_HEAD));
+
+	const named = project('named', JSON.stringify({ secretPatterns: [], names: { メジェド: 'ハナコ', ガネーシャ: 'アヤ', まーちゅう: 'ゆう' } }));
+	const namedResult = call(realHook, named);
+	check('呼び名：names があれば、終了コード 0', namedResult.status === 0);
+	check(
+		'呼び名：names があれば、既定の名前の順で対応の行が入る',
+		namedResult.context.includes(`${NAMES_HEAD}ガネーシャ＝アヤ、メジェド＝ハナコ、まーちゅう＝ゆう。`)
+	);
+	check('呼び名：対応の行は、頭の行の次（本文の前）にある', namedResult.context.indexOf(NAMES_HEAD) < namedResult.context.indexOf(rulesText.trim().slice(0, 20)));
+	check('呼び名：本文も今までどおり入る', namedResult.context.includes(rulesText.trim()));
+
+	const noNames = project('no-names', JSON.stringify({ secretPatterns: [] }));
+	check('呼び名：names が無い設定ファイルなら、対応の行は入らない', !call(realHook, noNames).context.includes(NAMES_HEAD));
+
+	const future = project('future-key', JSON.stringify({ futureKey: 1, names: { 健さん: 'ケン' } }));
+	check('呼び名：知らないキーがあっても読み捨てて、対応の行が入る', call(realHook, future).context.includes(`${NAMES_HEAD}健さん＝ケン。`));
+
+	for (const [label, config] of [
+		['JSON として壊れている', '{ not json'],
+		['知らない名前のキー', JSON.stringify({ names: { だれか: 'x' } })],
+		['呼び名に改行', JSON.stringify({ names: { メジェド: 'ハナ\nコ' } })],
+		['大文字小文字違いのキー', JSON.stringify({ Names: {} })],
+	]) {
+		const r = call(realHook, project(`broken-${label}`, config));
+		check(`呼び名：設定が壊れている（${label}）: 終了コード 0`, r.status === 0);
+		check(
+			`呼び名：設定が壊れている（${label}）: 対応は入れず、既定のままと書き、本文は入る`,
+			!r.context.includes(NAMES_HEAD) && r.context.includes('呼び名は既定のまま') && r.context.includes(rulesText.trim())
+		);
+	}
+
+	// 呼び名の行の分だけ、team-rules.md の入る上限が減る。6人全部を40文字で書いても、今の team-rules.md が入ること
+	const longest = {};
+	for (const name of ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう']) {
+		longest[name] = 'あ'.repeat(40);
+	}
+	const fullNamed = call(realHook, project('full-named', JSON.stringify({ names: longest })));
+	check(
+		'呼び名：6人全部を40文字で書いても、今の team-rules.md の本文が入る（1万文字以下）',
+		fullNamed.context.includes(rulesText.trim()) && fullNamed.context.includes(NAMES_HEAD) && fullNamed.context.length <= MAX_LENGTH
+	);
+
+	const hugeNamed = fake('huge-named', 'あ'.repeat(MAX_LENGTH + 100));
+	const hugeNamedResult = call(hugeNamed.hook, named);
+	check(
+		'呼び名：1万文字を超えて Read を促す文になるときも、対応の行は入る',
+		hugeNamedResult.context.includes('Read で読んでから作業すること') && hugeNamedResult.context.includes(`${NAMES_HEAD}ガネーシャ＝アヤ`)
+	);
 } finally {
 	rmSync(sandbox, { recursive: true, force: true });
 }

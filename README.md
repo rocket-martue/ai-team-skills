@@ -1,12 +1,12 @@
 # AIチーム開発 スキル一式
 
-Claude Code のメイン（ガネーシャ）が、メジェド・健さん・Fさん・純ちゃんを呼べるようにするプラグイン `ai-team` と、各リポジトリに置く設定。作業の流れ（手順・回数・分かれ目）は決めない。誰をいつ呼ぶかは、ガネーシャがチーム共通の決まり（`plugins/ai-team/docs/team-rules.md`）の目安でその都度選び、迷ったらまーちゅうに聞く。
+Claude Code のメイン（ガネーシャ）が、メジェド・健さん・藤さん・純ちゃんを呼べるようにするプラグイン `ai-team` と、各リポジトリに置く設定。作業の流れ（手順・回数・分かれ目）は決めない。誰をいつ呼ぶかは、ガネーシャがチーム共通の決まり（`plugins/ai-team/docs/team-rules.md`）の目安でその都度選び、迷ったらまーちゅうに聞く。
 
 | 名前 | 役 | 呼び方 |
 | --- | --- | --- |
 | ガネーシャ | 計画・実装（直接直すかメジェドに頼むかを選ぶ）・レビュー役を選んで呼ぶ・頼まれたらコミットと PR | Claude Code のメイン |
 | メジェド | 頼まれた範囲の実装 | Agent ツールで `ai-team:mejed`（既定は Haiku。大きい実装は `model: sonnet` を付ける） |
-| Fさん | 壊す側から読んで、指摘だけ返す | Agent ツールで `ai-team:adversary`（Fable） |
+| 藤さん | 壊す側から読んで、指摘だけ返す | Agent ツールで `ai-team:adversary`（Fable） |
 | 健さん | 読むだけの相談・レビュー、画像の生成（外部委託業者。Codex CLI） | スキル `codex` |
 | 純ちゃん | 差分を読んで指摘を返す | スキル `code-review`（`/code-review`。`--fix` は付けない） |
 | まーちゅう | 要件と最終判断・マージ | 人 |
@@ -23,8 +23,8 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・F�
 
 | ファイル | 中身 |
 | --- | --- |
-| `docs/team-rules.md` | チーム共通の決まり（言語・作業の進め方・チームの表・選び方の目安）。ガネーシャにはセッションの始めに SessionStart フックで入る。メジェドと Fさんは最初に Read で読む |
-| `agents/mejed.md`・`agents/adversary.md` | メジェドと Fさんの定義 |
+| `docs/team-rules.md` | チーム共通の決まり（言語・作業の進め方・チームの表・選び方の目安）。ガネーシャにはセッションの始めに SessionStart フックで入る。メジェドと藤さんは最初に Read で読む |
+| `agents/mejed.md`・`agents/adversary.md` | メジェドと藤さんの定義 |
 | `skills/codex/` | 健さんの呼び方と、ラッパー `scripts/invoke-codex.ps1`（read-only・秘密情報の照らし合わせ・返事は標準出力に出すだけ） |
 | `hooks/guard-code-edit.mjs` | 編集のガード。秘密情報のファイルと、リポジトリの外（メモリ・計画ファイル・scratchpad を除く）の編集だけを止める。誰が編集するかは見ない |
 | `hooks/session-start.mjs` | team-rules.md をセッションの始めに入れる |
@@ -38,7 +38,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・F�
 | `docs/team/Ganesha.md`・`docs/team/common-rules.md` | リポジトリの `docs/team/`。common-rules.md はリポジトリ固有の決まり（コーディング・チェックコマンド） |
 | `CLAUDE.md.snippet` | 中身を `CLAUDE.md` の先頭に足す |
 | `claude/settings.json` | `.claude/settings.json`。読むだけの git・gh と健さんのラッパーの allow、秘密情報の Read と `git checkout`・`merge`・`rebase`・`reset`・`gh pr merge` の deny（Bash と PowerShell の両方） |
-| `claude/ai-team.json` | `.claude/ai-team.json`。秘密情報のパターンの追加（`secretPatterns`。グロブ。既定の4つ `.env*`・`.dev.vars`・`.kv/`・`wp-config.php` は外せない）。ガードとラッパーが読む。壊れていると、ガードは設定ファイルのほかの編集を全部止め、ラッパーは健さんを呼ばない |
+| `claude/ai-team.json` | `.claude/ai-team.json`。秘密情報のパターンの追加（`secretPatterns`。グロブ。既定の4つ `.env*`・`.dev.vars`・`.kv/`・`wp-config.php` は外せない）と、呼び名の対応（`names`。下の「呼び名を変える」）。ガードとラッパーと SessionStart のフックが読む。壊れていると、ガードは設定ファイルのほかの編集を全部止め、ラッパーは健さんを呼ばない。知らないキーは読み捨てる。ただし、知っているキーの打ち間違いに見えるキー（記号を除いて小文字にそろえたら同じ、か、2文字以内の違い。例：`secretPattern`・`secret_patterns`・`Names`）は、秘密情報の守りが黙って消えないよう、壊れている扱い |
 | `codex/AGENTS.md` | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲 |
 | `gitignore.snippet` | `.gitignore` に足す行 |
 
@@ -49,11 +49,30 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・F�
 ガネーシャにふつうに頼む。誰を呼ぶかは、作業を始めるときにガネーシャが一言伝える。指名もできる。
 
 - 「メジェドに実装を頼んで」→ ガネーシャが範囲（と、あれば `docs/tasks/<タスク名>/plan.md`）を渡して `ai-team:mejed` を呼ぶ。報告は短い見出し（結果・変更したファイル・チェックの結果と、あれば範囲の外）
-- 「Fさんに見てもらって」→ ガネーシャが計画書のパスか比べるブランチだけを渡して `ai-team:adversary` を呼ぶ（自分の結論は渡さない）
+- 「藤さんに見てもらって」→ ガネーシャが計画書のパスか比べるブランチだけを渡して `ai-team:adversary` を呼ぶ（自分の結論は渡さない）
 - 「健さんに聞いて」「健さんにレビューして」→ スキル `codex` の `consult`・`review`
 - 「純ちゃんに見てもらって」→ `/code-review`（枠の消費が大きい）
 
 指摘は、ガネーシャが一次データで確かめてから採る。コミット・PR は頼まれたときだけ。マージはまーちゅう。
+
+### 呼び名を変える
+
+この README とプラグインの文書の名前（ガネーシャ・メジェド・健さん・藤さん・純ちゃん・まーちゅう）は既定の名前。リポジトリの `.claude/ai-team.json` の `names` に、既定の名前から呼び名への対応を書くと、そのリポジトリではその呼び名で動く（書いた名前だけ変わる）。
+
+```json
+{
+	"secretPatterns": [],
+	"names": { "ガネーシャ": "アヤ", "メジェド": "ハナコ", "まーちゅう": "ゆう" }
+}
+```
+
+- SessionStart のフックが、ガネーシャの文脈の頭に対応を入れる。メジェド・藤さんは、作業の最初に ai-team.json を読んで読み替える。書いた後は VS Code を開き直す（セッションの始めに入るため）
+- 書き間違えると（キーが違う・呼び名が空や改行入り）、設定ファイルが壊れている扱いになる。ガードは設定ファイルのほかの編集を全部止め、健さんも呼ばない（設定ファイルそのものは直せる）。SessionStart は止めずに「呼び名は既定のまま」と入れる
+- 呼び名は1行の文字列（改行・制御文字なし、40文字まで）。キーは既定の名前の6つだけ。違えば設定ファイルが壊れている扱いになる
+- 変わらないもの：呼び出しの名前（`ai-team:mejed`・`ai-team:adversary`・スキル `codex`・`/code-review`）、健さんへの頼みの文の頭（「ガネーシャから」など。健さんの AGENTS.md がこの頭で見分けるため）
+- キャラ設定（口調・性格）は別の場所にある。ガネーシャはリポジトリの `docs/team/Ganesha.md`、健さんは各 PC の `<CODEX_HOME>/AGENTS.md`。メジェドと藤さんはプラグインの中（`plugins/ai-team/agents/`）なので、変えるならこのリポジトリをフォークして直す
+- **`names` を書く前に**、そのリポジトリを使う全部の PC で、プラグインを `names` に対応した版にし（「導入済みのリポジトリへの反映」）、開いているセッションを開き直す。対応する前の版は `names` を知らないキーとして「壊れている」と扱い、ガードが全部の編集を止める
+- それでも古い版で止まったとき（止める文に「使えるのは secretPatterns・plannerWritable だけ」とある）は、`names` を消さずに、その PC でプラグインを上げて（「導入済みのリポジトリへの反映」の手で打つコマンド）、VS Code を開き直す
 
 ## 導入
 
