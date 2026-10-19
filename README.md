@@ -76,21 +76,77 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 
 ## 導入
 
-`claude` が PATH に無ければ、VS Code の拡張の `claude.exe`（`<ホーム>/.vscode/extensions/anthropic.claude-code-<版>-<OS>/resources/native-binary/claude.exe`）で打つ。
+`claude` が PATH に無ければ、VS Code の拡張の `claude.exe`（`<ホーム>/.vscode/extensions/anthropic.claude-code-<版>-<OS>/resources/native-binary/claude.exe`）で打つ。理由や注意は、最後の「つまずきやすいところ」にまとめてある。
 
-1. マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。続けて自動更新をオンにする（自前のマーケットプレイスは既定でオフ）。セッションで `/plugin` → Marketplaces → ai-team-skills → 「Enable auto-update」か、`<ホーム>/.claude/settings.json` の `extraKnownMarketplaces` の `ai-team-skills` に `"autoUpdate": true`
-2. リポジトリに `repo-files/` の中身を置く（上の表。既存の `.claude/settings.json`・`.claude/ai-team.json` があれば、リポジトリ固有の分を残して合わせる）
-3. **settings.json を置いた後に**、リポジトリの根で `claude plugin install ai-team@ai-team-skills --scope project`（install が `enabledPlugins` を書くので、先に打つと写したときに消える。`--scope` を付けずに入れると、PC の全リポジトリでガードが動く）
-4. `docs/team/common-rules.md` のチェックコマンドと、`.claude/ai-team.json` の `secretPatterns`（settings.json の `Read(...)` の deny もそろえる）を案件に合わせる
-5. 健さんを使うなら、`npm install -g @openai/codex`・`codex login` と、`repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md` に置く
-6. リポジトリを信頼してから（信頼していないと settings.json の allow が無視される。ドライブ名の大文字・小文字で別に持つので、`cd C:\GitHub\<repo>; claude` と `cmd /c "cd /d c:\GitHub\<repo> && claude"` の両方で信頼する）、VS Code を閉じて開き直す
-7. allow が効くかを確かめる：VS Code の新しいセッションを Manual で開き、スキルを読み込ませずに、次の2つを**Bash ツールで**、1つずつ単独で、書いてある形のまま打たせる（「Bash ツールで」と頼みに書く。この2つの allow は Bash の形にしか無いので、PowerShell ツールで打つと当たらず、確認が出る）。確認が出なければ効いている（画面を見なくても、セッションの記録の jsonl の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たった）。確認が出たら、6 の信頼を見直す。「常に許可」は選ばない
-   - `git fetch origin`
-   - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.ps1" -Mode check`（健さんは呼ばない。`CHECK: ok` が出る）
+### PC ごとに1回
+
+1. マーケットプレイスを入れる
+
+   ```
+   claude plugin marketplace add rocket-martue/ai-team-skills
+   ```
+
+2. 自動更新をオンにする。セッションで `/plugin` → Marketplaces → ai-team-skills → 「Enable auto-update」。または、`<ホーム>/.claude/settings.json` の `extraKnownMarketplaces` の `ai-team-skills` に `"autoUpdate": true` を書く
+3. 健さんを使うなら：Codex CLI を入れてログインし（`npm install -g @openai/codex`・`codex login`）、このリポジトリの `repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md`（既定は `<ホーム>/.codex/AGENTS.md`）に置く
+
+### リポジトリごと
+
+1. ファイルを置く（写す元はこのリポジトリの `repo-files/`）
+
+   | 写す元 | 写す先（入れるリポジトリ） |
+   | --- | --- |
+   | `claude/settings.json` | `.claude/settings.json`（既にあれば、そのリポジトリの allow・deny を残して合わせる） |
+   | `claude/ai-team.json` | `.claude/ai-team.json`（既にあれば、足した `secretPatterns` を残す） |
+   | `docs/team/Ganesha.md`・`docs/team/common-rules.md` | `docs/team/` |
+   | `CLAUDE.md.snippet` の中身 | `CLAUDE.md` の先頭に足す |
+   | `gitignore.snippet` の中身 | `.gitignore` に足す |
+
+2. 案件に合わせる：`docs/team/common-rules.md` のチェックコマンド、`.claude/settings.json` の allow（チェックコマンドの分）、`.claude/ai-team.json` の `secretPatterns`（足したら settings.json の `Read(...)` の deny もそろえる）
+3. プラグインを入れる。**1 で settings.json を置いた後に**、リポジトリの根で打つ
+
+   ```
+   claude plugin install ai-team@ai-team-skills --scope project
+   ```
+
+4. リポジトリを信頼する。PowerShell で1つずつ打ち、「Yes, I trust this folder」を選んで `/exit` で終える（ダイアログに並ぶ決まりに、知らないものが無いかも見る）
+
+   ```
+   cd C:\GitHub\<repo>; claude
+   cmd /c "cd /d c:\GitHub\<repo> && claude"
+   ```
+
+5. VS Code を閉じて開き直す
+
+### 入ったかを確かめる
+
+VS Code の新しいセッションを Manual モードで開いて、ガネーシャに1つずつ頼む。
+
+1. 「チーム共通の決まりの場所は？」と聞く。`<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/docs/team-rules.md` のような答えが返れば、プラグインが入っている。`<版>` はコミットの先頭12文字のフォルダ名で、次の 2 で使う
+2. allow が効くかを確かめる。次の2つを、それぞれ単独で頼む（`<版>` は 1 の答えのもの）。どちらも確認のダイアログが出なければ効いている
+
+   ```
+   Bash ツールで git fetch origin だけを単独で打って
+   ```
+
+   ```
+   Bash ツールで、次のコマンドを書いてある形のまま単独で打って：
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.ps1" -Mode check
+   ```
+
+   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。ダイアログを見逃しても、セッションの記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たっている
+
+### つまずきやすいところ
+
+- **install は settings.json を置いた後に打つ。** install が `.claude/settings.json` に `enabledPlugins` を書くので、先に打つと、settings.json を写したときに消える
+- **`--scope project` を付ける。** 付けないと user のスコープに入り、その PC の全部のリポジトリでガードが動く
+- **信頼は `C:` と `c:` の両方で。** 信頼していないリポジトリでは、settings.json の allow が丸ごと無視される。信頼の印はドライブ名の大文字・小文字で別に持ち、VS Code は小文字の `c:` で動くことがある
+- **allow の確かめは Bash ツールで、パスまで書いて頼む。** この2つの allow は Bash の形にしか無いので、PowerShell ツールで打つと当たらずに確認が出る。パスを書かずに「`-Mode check` を打って」とだけ頼むと、ガネーシャが `-Mode check` だけを打とうとする
+- **確認が出ても「常に許可」は選ばない。** `.claude/settings.local.json` に決まりが書かれ、settings.json の allow が効いていないことが隠れる。出たら、4 の信頼を見直す
+- **写すときは、このリポジトリの作業ツリーからそのまま写してよい。** `.gitattributes` で LF にそろえてある
 
 ### 導入済みのリポジトリへの反映
 
-- **プラグインの中身は自動で届く。** 自動更新をオンにしてあれば（「導入」の1）、そのリポジトリのセッションで最初のメッセージを送ってから最大10分で、マーケットプレイスと `--scope project` のプラグインが新しい版になる。効くのは、次に VS Code を開き直したときか `/reload-plugins` の後。そのリポジトリでセッションを使わない間は、古い版のまま
+- **プラグインの中身は自動で届く。** 自動更新をオンにしてあれば（「導入」の「PC ごとに1回」の2）、そのリポジトリのセッションで最初のメッセージを送ってから最大10分で、マーケットプレイスと `--scope project` のプラグインが新しい版になる。効くのは、次に VS Code を開き直したときか `/reload-plugins` の後。そのリポジトリでセッションを使わない間は、古い版のまま
 - すぐ入れたいときだけ手で打つ：PC ごとに `claude plugin marketplace update ai-team-skills`、リポジトリごとに根で `claude plugin update ai-team@ai-team-skills --scope project`、そのあと VS Code を開き直す。入った版は `<ホーム>/.claude/plugins/installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`
 - **リポジトリ側（`repo-files/` の中身）は手で反映する。** `docs/team/Ganesha.md`・`common-rules.md` を今の版に差し替えて、固有の分（チェックコマンドなど）を戻す。写すときは、テンプレートの作業ツリー（LF）から写す。`.claude/ai-team.json` に古い `plannerWritable` が残っていても動く（読み捨てる）
 - プラグインだけ先に届いて、リポジトリ側の文書が古いままの間は、ガネーシャはチーム共通の決まり（team-rules.md）に従い、まーちゅうに差し替えを伝える（team-rules.md の「作業の進め方」に書いてある）
@@ -113,6 +169,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 | `.claude-plugin/`・`plugins/ai-team/.claude-plugin/`・スキルやエージェントの追加・名前の変更 | `claude plugin validate .` と `claude plugin validate plugins/ai-team` |
 
 - `claude plugin validate` は `--strict` を付けない（`version` を書かないので必ず失敗する）。終了コード 0 で、警告が `version` が無いことだけならよい
+- plugin.json に `version` を書かないのは、コミットの SHA を版にして、マージのたびに自動で届くようにするため。書くと、版を上げない限り、自動更新でも `claude plugin update` でも更新が届かなくなる
 - `claude -p --settings <ファイル>` で試すときは、`enabledPlugins` を含む設定を渡さない（そのプラグインが user スコープに自動で入る）
 
 ## ライセンス
