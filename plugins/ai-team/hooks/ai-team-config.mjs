@@ -4,12 +4,10 @@
 // - リンク（シンボリックリンク・ジャンクション）をたどる関数
 // - グロブを正規表現に直す関数
 // - 設定ファイル（.claude/ai-team.json）の読み込みと確かめ
-// - 「直接コード」の印（まーちゅうの指示でガネーシャがコードを直せるしるし）の置き場所と読み方
 // - ラッパーから呼ぶ入口（node ai-team-config.mjs check ...）
-// リポジトリごとの追加は .claude/ai-team.json（secretPatterns・plannerWritable）に書く。このファイルは書き換えない。
+// リポジトリごとの追加は .claude/ai-team.json（secretPatterns）に書く。このファイルは書き換えない。
 
 import { lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,60 +21,9 @@ export const CONFIG_CANDIDATES = ['.claude/ai-team.json', 'repo-files/claude/ai-
 // 確かめが済んだときに --out の1行目へ書く印（ラッパーが読む）
 export const OK_MARK = 'ai-team-config: ok';
 
+// plannerWritable は、ガネーシャが確認なしで編集できるパスを足すキーだった（team-slim で使わなくなった）。
+// 導入済みのリポジトリの .claude/ai-team.json に残っていても止めないよう、形だけ確かめて読み捨てる。
 const CONFIG_KEYS = ['secretPatterns', 'plannerWritable'];
-
-// ---- 「直接コード」の印 ----
-// まーちゅうが決まった言い方で指示したセッションにだけ付く。ガードは、メインのエージェントの行 8（コード）を、有効な印があるときだけ通す。
-// 置き場所：<一時ディレクトリ>/ai-team-direct-edit/<session_id>（scratchpad の <一時ディレクトリ>/claude/ の外）。
-// 中身：{"createdAt": <付けた時刻。1970年からのミリ秒の整数>}
-export const MARK_DIR_NAME = 'ai-team-direct-edit';
-export const MARK_TTL_MS = 24 * 60 * 60 * 1000;
-export const MARK_FUTURE_MS = 5 * 60 * 1000;
-
-export function markDir() {
-	return path.join(tmpdir(), MARK_DIR_NAME);
-}
-
-// session_id はファイル名に使うので、英数字・-・_ の1〜128文字だけ受ける。
-export function isValidSessionId(id) {
-	return typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
-}
-
-export function markPath(sessionId) {
-	return path.join(markDir(), sessionId);
-}
-
-// 印の状態を返す。'valid'（有効）・'expired'（24時間より古い）・'none'（無い・読めない・壊れている・リンク・ハードリンクが2つ以上）。
-// 未来の時刻は、5分先までは今と同じ、それより先は壊れているとする。
-export function readMark(sessionId, now = Date.now()) {
-	if (!isValidSessionId(sessionId)) {
-		return 'none';
-	}
-
-	try {
-		if (lstatSync(markDir()).isSymbolicLink()) {
-			return 'none';
-		}
-
-		const file = markPath(sessionId);
-		const stat = lstatSync(file);
-
-		if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) {
-			return 'none';
-		}
-
-		const data = JSON.parse(readFileSync(file, 'utf8'));
-		const createdAt = data && typeof data === 'object' ? data.createdAt : undefined;
-
-		if (!Number.isSafeInteger(createdAt) || createdAt > now + MARK_FUTURE_MS) {
-			return 'none';
-		}
-
-		return now - createdAt > MARK_TTL_MS ? 'expired' : 'valid';
-	} catch {
-		return 'none';
-	}
-}
 
 // Windows のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
 // パターンとの照合も包含の判定も、Windows では小文字にそろえてから行う。
@@ -242,7 +189,7 @@ function parseConfig(buffer) {
 // 設定ファイルを読む。candidates は絶対パスの一覧で、前から順に見て、最初に「ある」ものを読む。
 // 結果は次のどれか。
 // - { status: 'none' }                                          … どの候補も無い（既定の一覧だけで動く）
-// - { status: 'ok', file, secretRegexps, writableRegexps }      … 読めた
+// - { status: 'ok', file, secretRegexps }                       … 読めた
 // - { status: 'broken', file, reason, link }                    … 壊れている。link は「リンク切れ」のとき真
 // 設定ファイルか親のディレクトリがリンクで、リンク先が無いときは、「無い」ではなくリンク切れとして止める
 // （足したパターンが黙って消えないため）。
@@ -272,7 +219,7 @@ export function readConfig(candidates, lstat = lstatSync) {
 		try {
 			const parsed = parseConfig(readFileSync(file));
 
-			return { status: 'ok', file, secretRegexps: parsed.secretPatterns, writableRegexps: parsed.plannerWritable };
+			return { status: 'ok', file, secretRegexps: parsed.secretPatterns };
 		} catch (e) {
 			return { status: 'broken', file, reason: e.message, link: false };
 		}
@@ -290,16 +237,13 @@ export function isSecretPath(rel, extraRegexps = []) {
 }
 
 // ---- ラッパーから呼ぶ入口 ----
-// node ai-team-config.mjs check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル> [--resolve-real]
-// --resolve-real：各パス（最初の --root からの相対パス）の実体（リンクをたどった先）も照らす。実体が根の外・実体を判定できない（リンク切れ）ときも当たりとする。
-// ファイルの中身を渡すとき（make-patch）に付ける。付けないときの動きは変えない
+// node ai-team-config.mjs check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル>
 // 終了コード：0 = 当たるパスなし / 1 = 引数やファイルの読み込みの失敗 / 2 = 設定ファイルが壊れている / 3 = 秘密情報に当たるパスがある
 function cli(argv) {
 	const [command, ...rest] = argv;
 	const roots = [];
 	let pathsFile = '';
 	let outFile = '';
-	let resolveReal = false;
 
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === '--root' && i + 1 < rest.length) {
@@ -308,8 +252,6 @@ function cli(argv) {
 			pathsFile = rest[++i];
 		} else if (rest[i] === '--out' && i + 1 < rest.length) {
 			outFile = rest[++i];
-		} else if (rest[i] === '--resolve-real') {
-			resolveReal = true;
 		} else {
 			process.stderr.write(`ai-team-config: 知らない引数です: ${rest[i]}\n`);
 			return 1;
@@ -317,7 +259,7 @@ function cli(argv) {
 	}
 
 	if (command !== 'check' || roots.length === 0 || pathsFile === '' || outFile === '') {
-		process.stderr.write('ai-team-config: 使い方: check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル> [--resolve-real]\n');
+		process.stderr.write('ai-team-config: 使い方: check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル>\n');
 		return 1;
 	}
 
@@ -352,39 +294,6 @@ function cli(argv) {
 	}
 
 	const hits = paths.filter((p) => isSecretPath(p.replace(/\\/g, '/'), extra));
-
-	if (resolveReal) {
-		const base = roots[0];
-		const baseReal = realPath(base);
-
-		for (const p of paths) {
-			if (hits.includes(p)) {
-				continue;
-			}
-
-			const real = realPath(path.join(base, ...p.replace(/\\/g, '/').split('/')));
-
-			if (real === null || baseReal === null) {
-				hits.push(p);
-				continue;
-			}
-
-			const rel = path.relative(baseReal, real);
-
-			if (rel === '') {
-				continue;
-			}
-
-			if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-				hits.push(p);
-				continue;
-			}
-
-			if (isSecretPath(rel.replace(/\\/g, '/'), extra)) {
-				hits.push(p);
-			}
-		}
-	}
 
 	if (hits.length > 0) {
 		try {

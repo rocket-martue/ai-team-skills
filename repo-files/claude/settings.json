@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Edit(docs/tasks/**)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git status:*)",

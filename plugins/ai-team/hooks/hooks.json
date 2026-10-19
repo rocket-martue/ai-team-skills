@@ -21,38 +21,6 @@
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"]
           }
         ]
-      },
-      {
-        "matcher": "resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/direct-edit-mark.mjs"]
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/direct-edit-mark.mjs"]
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/direct-edit-mark.mjs"]
-          }
-        ]
       }
     ]
   }
