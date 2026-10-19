@@ -59,7 +59,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・F�
 
 `claude` が PATH に無ければ、VS Code の拡張の `claude.exe`（`<ホーム>/.vscode/extensions/anthropic.claude-code-<版>-<OS>/resources/native-binary/claude.exe`）で打つ。
 
-1. マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`
+1. マーケットプレイスを入れる（PC ごとに1回）：`claude plugin marketplace add rocket-martue/ai-team-skills`。続けて自動更新をオンにする（自前のマーケットプレイスは既定でオフ）。セッションで `/plugin` → Marketplaces → ai-team-skills → 「Enable auto-update」か、`<ホーム>/.claude/settings.json` の `extraKnownMarketplaces` の `ai-team-skills` に `"autoUpdate": true`
 2. リポジトリに `repo-files/` の中身を置く（上の表。既存の `.claude/settings.json`・`.claude/ai-team.json` があれば、リポジトリ固有の分を残して合わせる）
 3. **settings.json を置いた後に**、リポジトリの根で `claude plugin install ai-team@ai-team-skills --scope project`（install が `enabledPlugins` を書くので、先に打つと写したときに消える。`--scope` を付けずに入れると、PC の全リポジトリでガードが動く）
 4. `docs/team/common-rules.md` のチェックコマンドと、`.claude/ai-team.json` の `secretPatterns`（settings.json の `Read(...)` の deny もそろえる）を案件に合わせる
@@ -71,7 +71,10 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・F�
 
 ### 導入済みのリポジトリへの反映
 
-プラグインの中身はマーケットプレイスの更新で届く。手で進めるときは、PC ごとに `claude plugin marketplace update ai-team-skills`、リポジトリごとに根で `claude plugin update ai-team@ai-team-skills --scope project` を打ち、VS Code を開き直す（入った版は `<ホーム>/.claude/plugins/installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`）。リポジトリ側は、`docs/team/Ganesha.md`・`common-rules.md` を `repo-files/` の今の版に差し替えて、固有の分（チェックコマンドなど）を戻す。`.claude/ai-team.json` に古い `plannerWritable` が残っていても動く（読み捨てる）。
+- **プラグインの中身は自動で届く。** 自動更新をオンにしてあれば（「導入」の1）、そのリポジトリのセッションで最初のメッセージを送ってから最大10分で、マーケットプレイスと `--scope project` のプラグインが新しい版になる。効くのは、次に VS Code を開き直したときか `/reload-plugins` の後。そのリポジトリでセッションを使わない間は、古い版のまま
+- すぐ入れたいときだけ手で打つ：PC ごとに `claude plugin marketplace update ai-team-skills`、リポジトリごとに根で `claude plugin update ai-team@ai-team-skills --scope project`、そのあと VS Code を開き直す。入った版は `<ホーム>/.claude/plugins/installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`
+- **リポジトリ側（`repo-files/` の中身）は手で反映する。** `docs/team/Ganesha.md`・`common-rules.md` を今の版に差し替えて、固有の分（チェックコマンドなど）を戻す。写すときは、テンプレートの作業ツリー（LF）から写す。`.claude/ai-team.json` に古い `plannerWritable` が残っていても動く（読み捨てる）
+- プラグインだけ先に届いて、リポジトリ側の文書が古いままの間は、ガネーシャはチーム共通の決まり（team-rules.md）に従い、まーちゅうに差し替えを伝える（team-rules.md の「作業の進め方」に書いてある）
 
 ## 外し方
 
