@@ -53,7 +53,7 @@ allowed-tools:
 
 - sandbox は常に `read-only`。健さんは一時ディレクトリにも書けないので、テストは走らない（結果はガネーシャ・メジェドのチェックコマンドで取る）
 - 秘密情報の照らし合わせは、ガードと同じ共有モジュール（プラグインの `hooks/ai-team-config.mjs`）で行う。作業の根とメインのチェックアウトの根の `.claude/ai-team.json`（無ければ `repo-files/claude/ai-team.json`）の `secretPatterns` も足す。設定ファイルが壊れていれば、どのモードでも呼ばずに止まる
-- `review`：健さんに渡る変更のすべてのパス（`git status --porcelain -z -uall` の全項目と、`-Base` のときは `git diff --name-only --no-renames <基準>...HEAD`）を照らし、1つでも秘密情報に当たれば呼ばずに止まる
+- `review`：健さんに渡る変更のすべてのパス（`git status --porcelain -z -uall` の全項目と、`-Base` のときは `git diff --name-only --no-renames <基準>...HEAD`）を照らし、1つでも秘密情報に当たれば呼ばずに止まる。どちらも `--ignore-submodules=none` を付けて、サブモジュールの `ignore` の設定があっても、サブモジュールの変更を拾う（照らすのはサブモジュールの置き場所のパスまで。中のファイルは照らさない）
 - `image`：参照画像を空の一時ディレクトリにコピーしてそこで呼ぶ（リポジトリには触れない）。`IMAGE_PATH:` の画像が `<CODEX_HOME>/generated_images/` の下にあり、参照画像と別のファイルのときだけ `IMAGE:` を出す
 - `codex`・`node` が PATH に無ければ、入れ方を出して止まる（`check` は `codex` が無くても動く）
 

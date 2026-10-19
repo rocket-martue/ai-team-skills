@@ -256,6 +256,49 @@ expectStop('-Base で、無い基準ブランチ', ({ git }) => {
 	commitAll(git, 'init');
 }, { base: 'no-such-branch', word: 'git diff が失敗' });
 
+// サブモジュール（#60）：ignore=all の設定があっても、サブモジュールの変更のパスを照らす。
+// 置き場所を秘密情報に当たる名前（.env.sub）にして、変更が拾われれば止まることで確かめる
+function addIgnoredSubmodule(ctx) {
+	const { git, repo, env } = ctx;
+	// git submodule（シェルのスクリプト）も、ローカルの git clone も、テストの絞った PATH では動かない。
+	// そこで、置き場所の中で直接 git init し、親から git add して、サブモジュールの参照（gitlink）と .gitmodules を作る
+	const inner = path.join(repo, '.env.sub');
+	fs.mkdirSync(inner, { recursive: true });
+	const ig = (...args) => {
+		const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...args], { cwd: inner, env, encoding: 'utf8' });
+		if (r.status !== 0) throw new Error(`git ${args.join(' ')} が失敗: ${r.stderr}`);
+	};
+	ig('init', '-q', '-b', 'main');
+	fs.writeFileSync(path.join(inner, 'a.txt'), 'a\n');
+	ig('add', '-A');
+	ig('commit', '-q', '-m', 's1');
+	fs.writeFileSync(path.join(repo, '.gitmodules'), '[submodule ".env.sub"]\n\tpath = .env.sub\n\turl = ./.env.sub\n\tignore = all\n');
+	git('add', '.gitmodules', '.env.sub');
+	git('commit', '-q', '-m', 'add submodule');
+	// サブモジュールの中で1つコミットを進める（親から見ると、サブモジュールの参照の変更）
+	fs.writeFileSync(path.join(inner, 'a.txt'), 'b\n');
+	ig('commit', '-q', '-am', 's2');
+	// ignore=all が効いていて、ふつうの git status には出ないことを先に確かめる（直しの前の漏れを再現しているか）
+	const r = spawnSync('git', ['status', '--porcelain'], { cwd: repo, env, encoding: 'utf8' });
+	if ((r.stdout || '').trim() !== '') throw new Error(`ignore=all が効いていません: ${r.stdout}`);
+}
+
+expectStop('サブモジュール：ignore=all でも、未コミットのサブモジュールの変更（.env.sub）を照らす', (ctx) => {
+	commitAll(ctx.git, 'init');
+	addIgnoredSubmodule(ctx);
+}, { word: '.env.sub' });
+
+expectStop('サブモジュール：-Base で、ignore=all でも、コミットしたサブモジュールの更新（.env.sub）を照らす', (ctx) => {
+	const { git } = ctx;
+	commitAll(git, 'init');
+	addIgnoredSubmodule(ctx);
+	// サブモジュールを足したところを基準にし、その後のコミットで参照だけを進める
+	git('branch', 'base-point');
+	git('checkout', '-q', '-b', 'feature');
+	git('add', '--force', '.env.sub');
+	git('commit', '-q', '-m', 'bump submodule');
+}, { base: 'base-point', word: '.env.sub' });
+
 // ---- 止まらない 3つ ----
 expectPass('作業ツリーがきれい', ({ git }) => {
 	commitAll(git, 'init');
