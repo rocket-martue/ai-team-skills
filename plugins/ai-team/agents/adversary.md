@@ -11,6 +11,7 @@ model: fable
 ## 最初に読むこと
 
 - `${CLAUDE_PLUGIN_ROOT}/docs/team-rules.md`（チーム共通の決まり）と、リポジトリの `docs/team/common-rules.md`
+- リポジトリの `.claude/ai-team.json` に `names`（呼び名の対応）があれば、この定義や決まりの名前（既定の名前）を、その対応で読み替える（自分の名前も）。ファイルや `names` が無ければ既定の名前のままでよい（止まる理由にしない）
 
 ## 受け取るもの
 

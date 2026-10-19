@@ -390,7 +390,7 @@ expectStop('設定が JSON として壊れている: review も止まる', ({ gi
 }, { word: brokenWord });
 
 // 設定ファイルの中身（秘密情報かもしれない）を、止めた文に出さない
-for (const [label, body] of [['JSON でない中身', 'API_KEY=abc123secret'], ['知らないキーの名前', '{"abc123secret": []}']]) {
+for (const [label, body] of [['JSON でない中身', 'API_KEY=abc123secret'], ['大文字小文字違いのキーの中身', '{"SecretPatterns": ["abc123secret"]}'], ['呼び名', '{"names": {"だれか": "abc123secret"}}']]) {
 	const name = `止まる: 設定の中身（${label}）が止めた文に出ない`;
 	try {
 		const ctx = makeRepo();
@@ -405,7 +405,7 @@ for (const [label, body] of [['JSON でない中身', 'API_KEY=abc123secret'], [
 	}
 }
 
-expectStop('設定に知らないキー（SecretPatterns）がある: 止まる', ({ git, write }) => {
+expectStop('設定に、知っているキーと大文字小文字だけ違うキー（SecretPatterns）がある: 止まる', ({ git, write }) => {
 	write('.claude/ai-team.json', j({ SecretPatterns: [] }));
 	commitAll(git, 'init');
 }, { mode: 'consult', word: brokenWord });
@@ -643,6 +643,22 @@ function runCheck(ctx) {
 		report(name, false, String(e.message));
 	}
 }
+
+// 呼び名の対応（names。#46）と、これより後の版のキー：どちらも健さんを呼べる
+expectPass('設定に names（呼び名の対応）があっても consult が通る', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ secretPatterns: [], names: { 健さん: 'ケン', ガネーシャ: 'アヤ' } }));
+	commitAll(git, 'init');
+}, { mode: 'consult' });
+
+expectPass('設定に知らないキーがあっても読み捨てて consult が通る', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ secretPatterns: [], futureKey: [1] }));
+	commitAll(git, 'init');
+}, { mode: 'consult' });
+
+expectStop('設定の names が壊れている（知らない名前のキー）: 止まる', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ names: { だれか: 'x' } }));
+	commitAll(git, 'init');
+}, { mode: 'consult', word: brokenWord });
 
 // 導入済みのリポジトリの互換：設定に plannerWritable が残っていても、健さんを呼べる
 expectPass('設定に plannerWritable が残っていても consult が通る', ({ git, write }) => {
