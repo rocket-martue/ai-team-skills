@@ -65,7 +65,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・F�
 4. `docs/team/common-rules.md` のチェックコマンドと、`.claude/ai-team.json` の `secretPatterns`（settings.json の `Read(...)` の deny もそろえる）を案件に合わせる
 5. 健さんを使うなら、`npm install -g @openai/codex`・`codex login` と、`repo-files/codex/AGENTS.md` を `<CODEX_HOME>/AGENTS.md` に置く
 6. リポジトリを信頼してから（信頼していないと settings.json の allow が無視される。ドライブ名の大文字・小文字で別に持つので、`cd C:\GitHub\<repo>; claude` と `cmd /c "cd /d c:\GitHub\<repo> && claude"` の両方で信頼する）、VS Code を閉じて開き直す
-7. allow が効くかを確かめる：VS Code の新しいセッションを Manual で開き、スキルを読み込ませずに、次の2つを1つずつ単独で打たせる。確認が出なければ効いている（画面を見なくても、セッションの記録の jsonl の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たった）。確認が出たら、6 の信頼を見直す。「常に許可」は選ばない
+7. allow が効くかを確かめる：VS Code の新しいセッションを Manual で開き、スキルを読み込ませずに、次の2つを**Bash ツールで**、1つずつ単独で、書いてある形のまま打たせる（「Bash ツールで」と頼みに書く。この2つの allow は Bash の形にしか無いので、PowerShell ツールで打つと当たらず、確認が出る）。確認が出なければ効いている（画面を見なくても、セッションの記録の jsonl の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たった）。確認が出たら、6 の信頼を見直す。「常に許可」は選ばない
    - `git fetch origin`
    - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.ps1" -Mode check`（健さんは呼ばない。`CHECK: ok` が出る）
 
