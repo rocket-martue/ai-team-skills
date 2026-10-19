@@ -1,0 +1,2 @@
+# 作業ツリーも LF にそろえる（core.autocrlf=true の PC でも、repo-files/ の中身を CRLF のまま写さないため）
+* text=auto eol=lf
