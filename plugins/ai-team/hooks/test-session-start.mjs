@@ -149,7 +149,7 @@ try {
 
 	// 呼び名の行の分だけ、team-rules.md の入る上限が減る。6人全部を40文字で書いても、今の team-rules.md が入ること
 	const longest = {};
-	for (const name of ['ガネーシャ', 'メジェド', '健さん', 'Fさん', '純ちゃん', 'まーちゅう']) {
+	for (const name of ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう']) {
 		longest[name] = 'あ'.repeat(40);
 	}
 	const fullNamed = call(realHook, project('full-named', JSON.stringify({ names: longest })));

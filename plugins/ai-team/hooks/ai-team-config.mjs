@@ -30,7 +30,7 @@ const GLOB_KEYS = ['secretPatterns', 'plannerWritable'];
 const CONFIG_KEYS = [...GLOB_KEYS, 'names'];
 
 // 呼び名を変えられる、既定の名前（names のキー）。文書の中の名前は、この既定の名前で書いてある。
-export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', 'Fさん', '純ちゃん', 'まーちゅう'];
+export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう'];
 
 // 呼び名の長さの上限（文字数）。
 const NAME_MAX_LENGTH = 40;
