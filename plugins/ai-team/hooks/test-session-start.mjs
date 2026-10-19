@@ -14,7 +14,6 @@ const MAX_LENGTH = 10000;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const realHook = path.join(here, 'session-start.mjs');
 const realRules = path.resolve(here, '..', 'docs', 'team-rules.md');
-const realWorkflow = path.resolve(here, '..', 'docs', 'workflow.md');
 
 let failed = 0;
 
@@ -53,7 +52,6 @@ function fake(name, rules) {
 	return {
 		hook: path.join(root, 'hooks', 'session-start.mjs'),
 		rules: path.join(root, 'docs', 'team-rules.md'),
-		workflow: path.join(root, 'docs', 'workflow.md'),
 	};
 }
 
@@ -66,8 +64,8 @@ try {
 	check('今の team-rules.md: additionalContext が1万文字以下', actual.context.length > 0 && actual.context.length <= MAX_LENGTH);
 	check('今の team-rules.md: team-rules.md の中身を含む', actual.context.includes(rulesText.trim()));
 	check(
-		'今の team-rules.md: team-rules.md と workflow.md の絶対パスが入っている',
-		actual.context.includes(realRules) && actual.context.includes(realWorkflow)
+		'今の team-rules.md: team-rules.md の絶対パスが入っている',
+		actual.context.includes(realRules)
 	);
 
 	// team-rules.md が無い
@@ -76,8 +74,8 @@ try {
 	check('team-rules.md が無い: 終了コード 0', missingResult.status === 0);
 	check('team-rules.md が無い: Read を促す文になる', missingResult.context.includes('Read で読んでから作業すること'));
 	check(
-		'team-rules.md が無い: 2つの絶対パスが入っている',
-		missingResult.context.includes(missing.rules) && missingResult.context.includes(missing.workflow)
+		'team-rules.md が無い: 絶対パスが入っている',
+		missingResult.context.includes(missing.rules)
 	);
 
 	// 1万文字を超える
@@ -85,9 +83,9 @@ try {
 	const hugeResult = call(huge.hook);
 	check('1万文字を超える: 終了コード 0', hugeResult.status === 0);
 	check('1万文字を超える: Read を促す文になり、中身を入れない', hugeResult.context.includes('Read で読んでから作業すること') && !hugeResult.context.includes('ああああ'));
-	check('1万文字を超える: 2つの絶対パスが入っている', hugeResult.context.includes(huge.rules) && hugeResult.context.includes(huge.workflow));
+	check('1万文字を超える: 絶対パスが入っている', hugeResult.context.includes(huge.rules));
 
-	// 中身は1万文字以下だが、頭の2行を足すと超える（境目）
+	// 中身は1万文字以下だが、頭の行を足すと超える（境目）
 	const probe = fake('edge-prbe', 'x');
 	const probeContext = call(probe.hook).context;
 	const headerLength = probeContext.length - 1; // 中身 'x' の1文字を引く
@@ -96,7 +94,7 @@ try {
 	check('境目（中身は1万文字以下・頭を足すと超える）: 中身が1万文字以下', MAX_LENGTH - headerLength + 1 <= MAX_LENGTH);
 	check('境目: 終了コード 0', justOverResult.status === 0);
 	check('境目: Read を促す文になる', justOverResult.context.includes('Read で読んでから作業すること') && !justOverResult.context.includes('xxxx'));
-	check('境目: 2つの絶対パスが入っている', justOverResult.context.includes(justOver.rules) && justOverResult.context.includes(justOver.workflow));
+	check('境目: 絶対パスが入っている', justOverResult.context.includes(justOver.rules));
 
 	// ちょうど1万文字（収まる側の境目）
 	const justFit = fake('edge-fits', 'x'.repeat(MAX_LENGTH - headerLength));

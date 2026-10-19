@@ -1,47 +1,18 @@
 #!/usr/bin/env node
-// PreToolUse フック：ファイル編集を「誰が」「どこに」するかで止める。
-// - メジェド（サブエージェント mejed。プラグインでは ai-team:mejed）だけがコードを編集できる
-// - ガネーシャ（メインのエージェント）が書けるのは docs/tasks/ の中と、Markdown（.md）の文書と、一部の設定（.gitignore など）だけ
-// - .claude/・docs/team/・根の CLAUDE.md は、誰が書くときも確認（ask）を出す
-// - メジェドは docs/tasks/<タスク名>/plan.md を書き換えられない
+// PreToolUse フック：ファイル編集を、秘密情報とリポジトリの外だけで止める。誰が編集するか（ガネーシャ・メジェド）は見ない。
 // - 秘密情報のファイルは誰も触れない
-// - まーちゅうの指示の印（direct-edit-mark.mjs が付ける）が有効なセッションのガネーシャ（メイン）は、コードも編集できる。印の置き場所への編集は誰でも止める
 // - リポジトリの外は、Claude Code 自身の置き場所（メモリ・計画ファイル・scratchpad）だけ通す
-// リポジトリごとの追加は .claude/ai-team.json（secretPatterns・plannerWritable）に書く。判定の部品は ai-team-config.mjs。このファイルは書き換えない。
-// 判定は「指定されたパス」と「シンボリックリンクをたどった実体のパス」の両方に当て、きつい方（止める > 確認 > 通す）を取る。
+// - 設定ファイル（.claude/ai-team.json）が壊れている・リンク切れのときは止める（足した秘密情報のパターンが黙って消えないため）。設定ファイルそのものの編集だけは通す（直す道）
+// リポジトリごとの追加は .claude/ai-team.json（secretPatterns）に書く。判定の部品は ai-team-config.mjs。このファイルは書き換えない。
+// 判定は「指定されたパス」と「シンボリックリンクをたどった実体のパス」の両方に当て、どちらかで止まれば止める。
 // 止めるときは exit 2 と stderr の理由を返す（Claude に理由が伝わる）。
-// 確認のときは exit 0 と hookSpecificOutput の JSON を標準出力に返す。
 
 import { readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import { forMatch, isSecretPath, markDir, readConfig, readMark, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
+import { forMatch, isSecretPath, readConfig, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
 
-// エージェントの名前：プラグインに切り替える前のリポジトリでは 'mejed'、プラグインのエージェントは 'ai-team:mejed'。
-const IMPLEMENTERS = ['mejed', 'ai-team:mejed'];
-
-// 確認（ask）を出すパス（リポジトリのルートから）。チームの設定・規約。
-// - .claude/ の下（ただし .claude/worktrees/ の下は除く。そこは worktree の置き場所で、頭を剥がした後のパスで判定する）
-// - docs/team/ の下と、リポジトリの根の CLAUDE.md（docs/team/Ganesha.md を取り込む入口）
-// Windows では照合の前にパスを小文字にそろえるので、大文字を含む名前（CLAUDE.md など）は小文字で書いて i フラグを付ける。
-const CONFIRM_PATTERNS = [/^\.claude\/(?!worktrees\/)/, /^docs\/team\//, /^claude\.md$/i];
-
-// docs/tasks/<タスク名>/plan.md。メジェドは書き換えられない。
-const PLAN_FILE = /^docs\/tasks\/[^/]+\/plan\.md$/;
-
-// メジェド以外が、確認なしで編集できるパス（リポジトリのルートから）。
-// .md は「コード以外（.md）の PR レビューの指摘はガネーシャが直す」（Ganesha.md）のため。
-// .gitignore・.gitattributes・.github/ISSUE_TEMPLATE/ はコードではない設定。
-// 追加は .claude/ai-team.json の plannerWritable に書く（グロブ。既定に足すだけ）。
-const PLANNER_WRITABLE = [
-	/^docs\/tasks\//,
-	/\.md$/,
-	/(^|\/)\.gitignore$/,
-	/^\.gitattributes$/,
-	/^\.github\/issue_template\//i,
-];
-
-// git worktree の置き場所（リポジトリの中）。この頭を剥がした相対パスで、メインのチェックアウトと同じ判定をする。
+// git worktree の置き場所（リポジトリの中）。この頭を剥がした相対パスでも、秘密情報の判定をする。
 const WORKTREE_PREFIX = /^\.claude\/worktrees\/[^/]+\/(.+)$/;
 
 // リポジトリの外でも編集してよい場所。Claude Code 自身が使う置き場所だけにする。
@@ -58,13 +29,6 @@ const OUTSIDE_WRITABLE = [
 	{ base: path.join(tmpdir(), 'claude'), pattern: /^/ },
 ];
 
-// 判定の結果。数が大きいほどきつい。
-const PASS = 0;
-const ASK = 1;
-const BLOCK = 2;
-
-const ASK_REASON = 'チームの設定・規約なので、まーちゅうの確認を取る';
-
 function block(reason) {
 	process.stderr.write(reason + '\n');
 	process.exit(2);
@@ -80,14 +44,13 @@ function isInside(target, dir) {
 	return t === d || t.startsWith(d.endsWith('/') ? d : d + '/');
 }
 
-// 通すなら { level: PASS }、確認なら { level: ASK, reason }、止めるなら { level: BLOCK, reason } を返す。
-function judge(absolute, projectDir, outsideWritable, label, config) {
-	const blocked = (reason) => ({ level: BLOCK, reason });
+// 止めるなら理由の文字列、通すなら null を返す。
+function judge(absolute, projectDir, outsideWritable, label, secretRegexps) {
 	const secretReason = `guard-code-edit: ${label} は秘密情報のファイルなので編集できません。`;
 
 	if (!isInside(absolute, projectDir)) {
 		if (SECRET_PATTERNS.some((re) => re.test(normalize(absolute)))) {
-			return blocked(secretReason);
+			return secretReason;
 		}
 
 		const allowed = outsideWritable.some(
@@ -95,63 +58,23 @@ function judge(absolute, projectDir, outsideWritable, label, config) {
 				isInside(absolute, base) && pattern.test(forMatch(path.relative(base, absolute).split(path.sep).join('/')))
 		);
 
-		if (allowed) {
-			return { level: PASS };
-		}
-
-		return blocked(`guard-code-edit: リポジトリの外（${label}）は編集できません。`);
+		return allowed ? null : `guard-code-edit: リポジトリの外（${label}）は編集できません。`;
 	}
 
 	const projectRel = forMatch(path.relative(projectDir, absolute).split(path.sep).join('/'));
 
 	// 秘密情報の判定は、worktree の頭を剥がす前のパスにも当てる（worktree の名前が `.kv` などでも抜けないように）。
-	if (isSecretPath(projectRel, config.secretRegexps)) {
-		return blocked(secretReason);
+	if (isSecretPath(projectRel, secretRegexps)) {
+		return secretReason;
 	}
 
-	// `.claude/worktrees/<名前>/` の中は、その頭を剥がした相対パスで判定する。入れ子でも、剥がせなくなるまで繰り返す。
-	// `.claude/worktrees/<名前>` そのもの（剥がすと空）は、剥がさずに今と同じ判定にする。
+	// `.claude/worktrees/<名前>/` の中は、その頭を剥がした相対パスでも判定する。入れ子でも、剥がせなくなるまで繰り返す。
 	let rel = projectRel;
 	for (let m = WORKTREE_PREFIX.exec(rel); m; m = WORKTREE_PREFIX.exec(rel)) {
 		rel = m[1];
 	}
 
-	if (isSecretPath(rel, config.secretRegexps)) {
-		return blocked(secretReason);
-	}
-
-	if (CONFIRM_PATTERNS.some((re) => re.test(rel))) {
-		return { level: ASK, reason: ASK_REASON };
-	}
-
-	const isImplementer = isSubagent && IMPLEMENTERS.includes(agentType);
-
-	if (PLAN_FILE.test(rel)) {
-		if (isImplementer) {
-			return blocked(`guard-code-edit: メジェドは ${label}（plan.md）を編集できません。`);
-		}
-
-		return { level: PASS };
-	}
-
-	if (
-		isImplementer ||
-		directEdit ||
-		PLANNER_WRITABLE.some((re) => re.test(rel)) ||
-		config.writableRegexps.some((re) => re.test(rel))
-	) {
-		return { level: PASS };
-	}
-
-	const who = isSubagent ? `サブエージェント「${agentType}」` : 'ガネーシャ';
-	const expired =
-		markState === 'expired'
-			? 'まーちゅうの指示の印は24時間で切れました（付け直すのはまーちゅうです）。'
-			: '';
-
-	return blocked(
-		`guard-code-edit: ${who}は ${label} を編集できません。${expired}実装は mejed サブエージェントに任せてください（delegate-to-mejed スキル）。`
-	);
+	return isSecretPath(rel, secretRegexps) ? secretReason : null;
 }
 
 let input;
@@ -168,23 +91,12 @@ if (!target) {
 	process.exit(0);
 }
 
-const isSubagent = Boolean(input.agent_id);
-const agentType = input.agent_type || '';
-
-// まーちゅうの指示の印。メインのエージェントだけが対象で、そのセッションの印が有効なときだけ、行 8（コード）を通す。
-const markState = isSubagent ? 'none' : readMark(input.session_id);
-const directEdit = markState === 'valid';
-
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
 const specified = path.resolve(projectDir, target);
 
 // リポジトリごとの追加（.claude/ai-team.json）。壊れていたら、黙って既定の一覧に戻らず、編集を止める。
 const configFile = path.join(projectDir, '.claude', 'ai-team.json');
 const loaded = readConfig([configFile]);
-const config = {
-	secretRegexps: loaded.status === 'ok' ? loaded.secretRegexps : [],
-	writableRegexps: loaded.status === 'ok' ? loaded.writableRegexps : [],
-};
 
 if (loaded.status === 'broken' && loaded.link) {
 	block('guard-code-edit: .claude/ai-team.json（または .claude/）がリンク切れなので編集を止めました。リンクを手で直してください。');
@@ -192,90 +104,41 @@ if (loaded.status === 'broken' && loaded.link) {
 
 const real = realPath(specified);
 
-// 印の置き場所（とその下）への編集は、誰が・どこで開いていても止める（印を作れないようにする）。指定されたパスと実体のパスの両方に当てる。
-{
-	const markRoot = markDir();
-	const markRootReal = realPath(markRoot);
-	const touchesMark = [specified, real]
-		.filter((t) => t !== null)
-		.some((t) => isInside(t, markRoot) || (markRootReal !== null && isInside(t, markRootReal)));
-
-	if (touchesMark) {
-		block(`guard-code-edit: ${target} は印の置き場所なので編集できません。`);
-	}
-}
-
 // 編集先が設定ファイルそのものか。設定ファイルがリンクのときは当たらない（ふつうの判定に回す。リンク先が秘密情報なら止まる）。
 const isConfigItself =
 	real !== null &&
 	normalize(specified) === normalize(configFile) &&
 	normalize(real) === normalize(path.join(realPath(projectDir) || projectDir, '.claude', 'ai-team.json'));
 
-// 確認（ask）を返して終わる。標準出力を書き切ってから抜ける。
-function ask(reason) {
-	const output = {
-		hookSpecificOutput: {
-			hookEventName: 'PreToolUse',
-			permissionDecision: 'ask',
-			permissionDecisionReason: reason,
-		},
-	};
-	process.stdout.write(JSON.stringify(output) + '\n', () => process.exit(0));
+// 設定ファイルそのものは、壊れていても・secretPatterns が当たっても直せるように通す（秘密情報ではない）。
+if (isConfigItself) {
+	process.exit(0);
 }
 
-// 設定ファイルが壊れているときの扱いと、設定ファイルそのものの編集（確認）。ここで決まれば、true を返す。
-function judgeConfig() {
-	if (loaded.status === 'broken') {
-		if (!isConfigItself) {
-			block(
-				`guard-code-edit: .claude/ai-team.json を読めないので編集を止めました（${loaded.reason}）。直すときは .claude/ai-team.json を編集してください（確認が出ます）。`
-			);
-		}
-
-		// 直す道を残す。設定ファイルは秘密情報ではない
-		ask(ASK_REASON);
-		return true;
-	}
-
-	if (isConfigItself) {
-		// 秘密情報の判定より先に見る（secretPatterns が設定ファイル自体に当たっても、設定ファイルは確認で直せる）
-		ask(ASK_REASON);
-		return true;
-	}
-
-	return false;
+if (loaded.status === 'broken') {
+	block(
+		`guard-code-edit: .claude/ai-team.json を読めないので編集を止めました（${loaded.reason}）。先に .claude/ai-team.json を直してください。`
+	);
 }
 
-if (!judgeConfig()) {
-	main();
+if (real === null) {
+	block(`guard-code-edit: ${target} はリンク先が無いシンボリックリンクを経由するので、編集先を判定できません。`);
 }
 
-function main() {
-	if (real === null) {
-		block(`guard-code-edit: ${target} はリンク先が無いシンボリックリンクを経由するので、編集先を判定できません。`);
-	}
+const secretRegexps = loaded.status === 'ok' ? loaded.secretRegexps : [];
+const reasons = [
+	judge(specified, projectDir, OUTSIDE_WRITABLE, target, secretRegexps),
+	judge(
+		real,
+		realPath(projectDir) || projectDir,
+		OUTSIDE_WRITABLE.map((entry) => ({ ...entry, base: realPath(entry.base) || entry.base })),
+		`${target}（リンク先 ${real}）`,
+		secretRegexps
+	),
+].filter((r) => r !== null);
 
-	const results = [
-		judge(specified, projectDir, OUTSIDE_WRITABLE, target, config),
-		judge(
-			real,
-			realPath(projectDir) || projectDir,
-			OUTSIDE_WRITABLE.map((entry) => ({ ...entry, base: realPath(entry.base) || entry.base })),
-			`${target}（リンク先 ${real}）`,
-			config
-		),
-	];
-
-	// 指定されたパスと実体のパスで判定が違うときは、きつい方を取る（止める > 確認 > 通す）。
-	const worst = results.reduce((a, b) => (b.level > a.level ? b : a));
-
-	if (worst.level === BLOCK) {
-		block(worst.reason);
-	}
-
-	if (worst.level === ASK) {
-		ask(worst.reason);
-	} else {
-		process.exit(0);
-	}
+if (reasons.length > 0) {
+	block(reasons[0]);
 }
+
+process.exit(0);

@@ -1,6 +1,6 @@
 {
   "name": "ai-team-skills",
-  "description": "ガネーシャ・メジェド・健さんで回す AI チーム開発のプラグイン",
+  "description": "ガネーシャがメジェド・健さん・Fさん・純ちゃんを呼べる AI チーム開発のプラグイン",
   "owner": {
     "name": "rocket-martue"
   },
@@ -8,7 +8,7 @@
     {
       "name": "ai-team",
       "source": "./plugins/ai-team",
-      "description": "ガネーシャ・メジェド・健さんで回す AI チーム開発のスキル・エージェント・フック・作業の流れ"
+      "description": "ガネーシャがメジェド・健さん・Fさん・純ちゃんを呼べる AI チーム開発のプラグイン（エージェント・健さんのスキル・秘密情報のガード）"
     }
   ]
 }

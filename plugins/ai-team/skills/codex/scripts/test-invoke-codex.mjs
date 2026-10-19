@@ -27,7 +27,7 @@ fs.mkdirSync(fakeDir);
 // 利用者のグローバルな除外（core.excludesFile）に左右されないよう、空のファイルを指す
 const emptyExcludes = path.join(root, 'empty-excludes');
 fs.writeFileSync(emptyExcludes, '');
-// 子プロセスの TEMP・TMP をここに向ける（一時ディレクトリへの保存が、本物の %TEMP% に残らないようにするため）
+// 子プロセスの TEMP・TMP をここに向ける（ラッパーの一時ファイルが本物の %TEMP% に残らないようにし、消し忘れも確かめるため）
 const tempDir = path.join(root, 'tmp');
 fs.mkdirSync(tempDir);
 
@@ -147,7 +147,7 @@ fs.writeFileSync(promptFile, '相談です\n');
 
 // workDir：作業の根（省略時は ctx.repo）。worktree から呼ぶときに指す
 function runWrapper(ctx, base, mode = 'review', workDir = ctx.repo, wrapperPath = wrapper) {
-	const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath, '-Mode', mode, '-Task', 't', '-WorkingDirectory', workDir];
+	const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath, '-Mode', mode, '-WorkingDirectory', workDir];
 	if (mode === 'consult') args.push('-PromptFile', promptFile);
 	if (base) args.push('-Base', base);
 	const r = spawnSync(psExe, args, { cwd: workDir, env: ctx.env, encoding: 'utf8' });
@@ -479,655 +479,99 @@ try {
 	report('止まる: 共有モジュールが印を書かずに 0 で終わると、consult も止まる', false, String(e.message));
 }
 
-// ---- 返事の保存先（Git に無視されるか）の7本。偽物の codex で、保存まで通す ----
-const envForGit = buildEnv(path.join(root, 'mark-unused.txt'));
-function gitStatus(dir) {
-	const r = spawnSync('git', ['status', '--porcelain', '-uall'], { cwd: dir, env: envForGit, encoding: 'utf8' });
-	if (r.status !== 0) throw new Error(`git status が失敗: ${r.stderr}`);
-	return r.stdout;
-}
+// ---- 返事は標準出力に出すだけ（保存しない）。偽物の codex で、返事を出すまで通す ----
 function gitIn(dir, env, ...args) {
 	const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...args], { cwd: dir, env, encoding: 'utf8' });
 	if (r.status !== 0) throw new Error(`git ${args.join(' ')} が失敗: ${r.stderr}`);
 	return r.stdout;
 }
-function runRaw(args, cwd, env) {
-	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, ...args], { cwd, env, encoding: 'utf8' });
-	return { code: r.status, stderr: r.stderr || '', stdout: r.stdout || '' };
+function gitStatus(ctx) {
+	return gitIn(ctx.repo, ctx.env, 'status', '--porcelain', '-uall');
 }
-function reviewArgs(repo) {
-	return ['-Mode', 'review', '-Task', 't', '-WorkingDirectory', repo];
-}
-function savedPath(stdout) {
-	const m = stdout.match(/^SAVED: (.+?)\s*$/m);
-	return m ? m[1] : null;
-}
-function isUnderTemp(p) {
-	return p !== null && path.isAbsolute(p) && p.toLowerCase().startsWith(tempDir.toLowerCase() + path.sep);
-}
-function readReply(p) {
-	return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim() : null;
-}
-const NOTICE = '一時ディレクトリに保存しました';
-
-// 1. 無視されるリポジトリ：リポジトリの中に保存し、SAVED は相対パス
-try {
-	const ctx = makeRepo();
-	ctx.write('.gitignore', 'docs/tasks/*/codex/\n');
-	commitAll(ctx.git, 'ignore');
-	const before = gitStatus(ctx.repo);
-	const r = runRaw(reviewArgs(ctx.repo), ctx.repo, ctx.env);
-	const saved = savedPath(r.stdout);
-	const ok = r.code === 0
-		&& saved === 'docs/tasks/t/codex/01-review.md'
-		&& readReply(path.join(ctx.repo, 'docs', 'tasks', 't', 'codex', '01-review.md')) === 'fake reply'
-		&& gitStatus(ctx.repo) === before;
-	report('保存: 無視されるリポジトリはリポジトリの中に保存し、SAVED は相対パス', ok, `(code=${r.code} saved=${saved} stderr=${r.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('保存: 無視されるリポジトリはリポジトリの中に保存し、SAVED は相対パス', false, String(e.message));
+// ラッパーは <TEMP>/claude/ の下に一時ディレクトリを作って消す。claude/ そのものは残ってよい
+function listTemp() {
+	fs.mkdirSync(path.join(tempDir, 'claude'), { recursive: true });
+	return [...fs.readdirSync(tempDir), ...fs.readdirSync(path.join(tempDir, 'claude')).map((n) => `claude/${n}`)].sort().join(',');
 }
 
-// 2. 無視されないリポジトリ：リポジトリに何も作らず、一時ディレクトリに保存する。続けて呼ぶと連番が続く（テスト3）
-try {
-	const ctx = makeRepo();
-	commitAll(ctx.git, 'init');
-	const before = gitStatus(ctx.repo);
-	const r1 = runRaw(reviewArgs(ctx.repo), ctx.repo, ctx.env);
-	const s1 = savedPath(r1.stdout);
-	const ok1 = r1.code === 0
-		&& isUnderTemp(s1)
-		&& path.basename(s1) === '01-review.md'
-		&& readReply(s1) === 'fake reply'
-		&& r1.stderr.includes(NOTICE)
-		&& !fs.existsSync(path.join(ctx.repo, 'docs'))
-		&& gitStatus(ctx.repo) === before;
-	report('保存: 無視されないリポジトリは一時ディレクトリに保存し、リポジトリに何も作らない', ok1, `(code=${r1.code} saved=${s1} stderr=${r1.stderr.trim().slice(0, 200)})`);
-
-	// 3. 同じリポジトリでもう一度呼ぶ：連番が一時ディレクトリでも続く
-	const r2 = runRaw(reviewArgs(ctx.repo), ctx.repo, ctx.env);
-	const s2 = savedPath(r2.stdout);
-	const ok2 = r2.code === 0
-		&& isUnderTemp(s2)
-		&& path.basename(s2) === '02-review.md'
-		&& readReply(s2) === 'fake reply'
-		&& r2.stderr.includes(NOTICE)
-		&& gitStatus(ctx.repo) === before;
-	report('保存: 二回目は一時ディレクトリの 02-review.md に続けて保存し、知らせが出る', ok2, `(code=${r2.code} saved=${s2} stderr=${r2.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('保存: 無視されないリポジトリは一時ディレクトリに保存し、リポジトリに何も作らない', false, String(e.message));
-	report('保存: 二回目は一時ディレクトリの 02-review.md に続けて保存し、知らせが出る', false, String(e.message));
+for (const mode of ['review', 'consult']) {
+	const name = `返事: ${mode} の返事が標準出力に出て、リポジトリにも一時ディレクトリにも何も残さない`;
+	try {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const before = gitStatus(ctx);
+		const tempBefore = listTemp();
+		const r = runWrapper(ctx, '', mode);
+		const ok = r.code === 0
+			&& r.called
+			&& /^fake reply\s*$/m.test(r.stdout)
+			&& !/^SAVED:/m.test(r.stdout)
+			&& gitStatus(ctx) === before
+			&& !fs.existsSync(path.join(ctx.repo, 'docs'))
+			&& listTemp() === tempBefore;
+		report(name, ok, `(code=${r.code} stdout=${r.stdout.trim().slice(0, 200)} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
 }
 
-// 4. 除外の除外：仮の名前は無視されるが、review の返事の名前は無視されない
-try {
-	const ctx = makeRepo();
-	ctx.write('.gitignore', 'docs/tasks/*/codex/*\n!docs/tasks/*/codex/*-review.md\n');
-	commitAll(ctx.git, 'ignore');
-	const before = gitStatus(ctx.repo);
-	const r = runRaw(reviewArgs(ctx.repo), ctx.repo, ctx.env);
-	const s = savedPath(r.stdout);
-	const ok = r.code === 0 && isUnderTemp(s) && readReply(s) === 'fake reply' && gitStatus(ctx.repo) === before;
-	report('保存: 除外の除外で review の名前が無視されないなら一時ディレクトリに保存する', ok, `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('保存: 除外の除外で review の名前が無視されないなら一時ディレクトリに保存する', false, String(e.message));
-}
-
-// 5. Git のリポジトリでないディレクトリから image で呼ぶ：docs/ を作らず、一時ディレクトリに保存する
+// image：偽物の codex は IMAGE_PATH の行を書かないので、返事を出したあと終了コード 2 で止まる（Git のリポジトリでなくても呼べる）
 try {
 	const dir = path.join(root, 'nogit');
 	fs.mkdirSync(dir, { recursive: true });
-	const prompt = path.join(root, 'prompt-5.md');
+	const prompt = path.join(root, 'prompt-image.md');
 	fs.writeFileSync(prompt, '画像を作って\n');
-	const img = path.join(root, 'ref-5.png');
+	const img = path.join(root, 'ref-image.png');
 	fs.writeFileSync(img, 'x');
-	const env = buildEnv(path.join(root, 'mark-5.txt'));
-	const r = runRaw(['-Mode', 'image', '-Task', 't', '-PromptFile', prompt, '-WorkingDirectory', dir, '-Image', img], dir, env);
-	const s = savedPath(r.stdout);
-	// 偽物の codex は IMAGE_PATH の行を書かないので、ラッパーは終了コード 2 で止まる（保存のあとで）
-	const ok = r.code === 2
-		&& isUnderTemp(s)
-		&& readReply(s) === 'fake reply'
-		&& r.stderr.includes(NOTICE)
+	const mark = path.join(root, 'mark-image.txt');
+	const env = buildEnv(mark);
+	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'image', '-PromptFile', prompt, '-WorkingDirectory', dir, '-Image', img], { cwd: dir, env, encoding: 'utf8' });
+	const ok = r.status === 2
+		&& fs.existsSync(mark)
+		&& /^fake reply\s*$/m.test(r.stdout || '')
+		&& (r.stderr || '').includes('IMAGE_PATH')
 		&& !fs.existsSync(path.join(dir, 'docs'));
-	report('保存: Git のリポジトリでない image は docs/ を作らず一時ディレクトリに保存する', ok, `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
+	report('返事: image は IMAGE_PATH が無ければ、返事を出したあと終了コード 2 で止まる', ok, `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
 } catch (e) {
-	report('保存: Git のリポジトリでない image は docs/ を作らず一時ディレクトリに保存する', false, String(e.message));
+	report('返事: image は IMAGE_PATH が無ければ、返事を出したあと終了コード 2 で止まる', false, String(e.message));
 }
 
-// 6. 親の違う同じ名前のリポジトリ2つ：保存先が混ざらない
-try {
-	const a = makeRepo(path.join('a', 'same'));
-	commitAll(a.git, 'init');
-	const b = makeRepo(path.join('b', 'same'));
-	commitAll(b.git, 'init');
-	const ra = runRaw(reviewArgs(a.repo), a.repo, a.env);
-	const rb = runRaw(reviewArgs(b.repo), b.repo, b.env);
-	const sa = savedPath(ra.stdout);
-	const sb = savedPath(rb.stdout);
-	const ok = ra.code === 0 && rb.code === 0
-		&& isUnderTemp(sa) && isUnderTemp(sb)
-		&& path.dirname(sa) !== path.dirname(sb)
-		&& path.basename(sa) === '01-review.md' && path.basename(sb) === '01-review.md'
-		&& readReply(sa) === 'fake reply' && readReply(sb) === 'fake reply';
-	report('保存: 親の違う同じ名前のリポジトリは、一時ディレクトリの保存先が混ざらない', ok, `(a=${sa} b=${sb})`);
-} catch (e) {
-	report('保存: 親の違う同じ名前のリポジトリは、一時ディレクトリの保存先が混ざらない', false, String(e.message));
-}
-
-// 7. worktree から呼ぶ：無視されているかはメインのチェックアウトで判定する（そこには行が無い）
-try {
-	const main = makeRepo();
-	commitAll(main.git, 'init');
-	const wt = path.join(root, 'wt-7');
-	gitIn(main.repo, main.env, 'worktree', 'add', '-q', '-b', 'feature', wt);
-	fs.writeFileSync(path.join(wt, '.gitignore'), 'docs/tasks/*/codex/\n');
-	gitIn(wt, main.env, 'add', '-A');
-	gitIn(wt, main.env, 'commit', '-q', '-m', 'ignore');
-	const beforeMain = gitStatus(main.repo);
-	const beforeWt = gitStatus(wt);
-	const r = runRaw(reviewArgs(wt), wt, main.env);
-	const s = savedPath(r.stdout);
-	const ok = r.code === 0
-		&& isUnderTemp(s)
-		&& readReply(s) === 'fake reply'
-		&& !fs.existsSync(path.join(main.repo, 'docs'))
-		&& gitStatus(main.repo) === beforeMain
-		&& gitStatus(wt) === beforeWt;
-	report('保存: worktree から呼ぶと、無視されているかはメインのチェックアウトで判定する', ok, `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('保存: worktree から呼ぶと、無視されているかはメインのチェックアウトで判定する', false, String(e.message));
-}
-
-// ---- save-code-review（/code-review の結果を保存するだけ。codex は呼ばない）----
-const saveBody = '2026-10-12 /code-review high plan.md\n{"findings": []}\n日本語の中身\n';
-const saveInput = path.join(root, 'save-input.md');
-fs.writeFileSync(saveInput, saveBody);
-const emptyInput = path.join(root, 'save-empty.md');
-fs.writeFileSync(emptyInput, '  \n');
-
-function saveArgs(repo, { stage = 'plan', input = saveInput } = {}) {
-	const args = ['-Mode', 'save-code-review', '-Task', 't', '-WorkingDirectory', repo];
-	if (stage !== null) args.push('-Stage', stage);
-	if (input !== null) args.push('-InputFile', input);
-	return args;
-}
-// codex も node も PATH に無い環境（git と PowerShell だけ）
-function envWithoutCodexAndNode(env) {
-	const e = { ...env };
-	e.PATH = [gitDir, path.join(sysRoot, 'System32'), psDir].join(';');
-	return e;
-}
-
-// S1. 無視されるリポジトリ：docs/tasks/t/code-review/01-plan.md に中身をそのまま保存し、SAVED は相対パス。2回目は 02-plan.md。codex は呼ばれない
-try {
-	const ctx = makeRepo();
-	ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
-	commitAll(ctx.git, 'ignore');
-	const before = gitStatus(ctx.repo);
-	const r1 = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
-	const s1 = savedPath(r1.stdout);
-	const body1 = fs.existsSync(path.join(ctx.repo, 'docs', 'tasks', 't', 'code-review', '01-plan.md'))
-		? fs.readFileSync(path.join(ctx.repo, 'docs', 'tasks', 't', 'code-review', '01-plan.md'), 'utf8') : null;
-	const ok1 = r1.code === 0 && s1 === 'docs/tasks/t/code-review/01-plan.md' && body1 === saveBody && !fs.existsSync(ctx.mark) && gitStatus(ctx.repo) === before;
-	report('save-code-review: 無視されるリポジトリは docs/tasks/t/code-review/01-plan.md に中身のまま保存し、SAVED は相対パス。codex は呼ばれない', ok1, `(code=${r1.code} saved=${s1} stderr=${r1.stderr.trim().slice(0, 200)})`);
-	const r2 = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
-	const s2 = savedPath(r2.stdout);
-	report('save-code-review: 2回目は 02-plan.md になる', r2.code === 0 && s2 === 'docs/tasks/t/code-review/02-plan.md', `(code=${r2.code} saved=${s2} stderr=${r2.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('save-code-review: 無視されるリポジトリは docs/tasks/t/code-review/01-plan.md に中身のまま保存し、SAVED は相対パス。codex は呼ばれない', false, String(e.message));
-	report('save-code-review: 2回目は 02-plan.md になる', false, String(e.message));
-}
-
-// S2. 無視されないリポジトリ：<一時ディレクトリ>/code-review-replies/…/t/01-plan.md に保存し、リポジトリに何も作らない
-try {
-	const ctx = makeRepo();
-	commitAll(ctx.git, 'init');
-	const before = gitStatus(ctx.repo);
-	const r = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
-	const s = savedPath(r.stdout);
-	const ok = r.code === 0
-		&& isUnderTemp(s)
-		&& s.includes(`${path.sep}code-review-replies${path.sep}`)
-		&& path.basename(path.dirname(s)) === 't'
-		&& path.basename(s) === '01-plan.md'
-		&& fs.readFileSync(s, 'utf8') === saveBody
-		&& !fs.existsSync(path.join(ctx.repo, 'docs'))
-		&& !fs.existsSync(ctx.mark)
-		&& gitStatus(ctx.repo) === before;
-	report('save-code-review: 無視されないリポジトリは code-review-replies の下に保存し、リポジトリに何も作らない', ok, `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('save-code-review: 無視されないリポジトリは code-review-replies の下に保存し、リポジトリに何も作らない', false, String(e.message));
-}
-
-// S3. codex も node も PATH に無くても保存できる
-try {
-	const ctx = makeRepo();
-	ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
-	commitAll(ctx.git, 'ignore');
-	const env = envWithoutCodexAndNode(ctx.env);
-	const probe = spawnSync(psExe, ['-NoProfile', '-Command', 'if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Get-Command node -ErrorAction SilentlyContinue)) { exit 1 } else { exit 0 }'], { env, encoding: 'utf8' });
-	if (probe.status !== 0) throw new Error('子のプロセスの PATH から codex・node を外せていません');
-	const r = runRaw(saveArgs(ctx.repo), ctx.repo, env);
-	const s = savedPath(r.stdout);
-	report('save-code-review: codex も node も PATH に無くても保存できる', r.code === 0 && s === 'docs/tasks/t/code-review/01-plan.md', `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('save-code-review: codex も node も PATH に無くても保存できる', false, String(e.message));
-}
-
-// S4. 設定ファイル（.claude/ai-team.json）が壊れていても保存できる
-try {
-	const ctx = makeRepo();
-	ctx.write('.claude/ai-team.json', '{ not json');
-	ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
-	commitAll(ctx.git, 'init');
-	const r = runRaw(saveArgs(ctx.repo), ctx.repo, ctx.env);
-	const s = savedPath(r.stdout);
-	report('save-code-review: 設定ファイルが壊れていても保存できる', r.code === 0 && s === 'docs/tasks/t/code-review/01-plan.md', `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
-} catch (e) {
-	report('save-code-review: 設定ファイルが壊れていても保存できる', false, String(e.message));
-}
-
-// S5. 止まる：-Stage が無い・plan でない、-InputFile が無い・空（終了コード 1。何も保存しない）
-for (const [label, opts] of [
-	['-Stage が無い', { stage: null }],
-	['-Stage が plan・pr・check のどれでもない', { stage: 'pr-before' }],
-	['-InputFile が無い', { input: null }],
-	['-InputFile のファイルが見つからない', { input: path.join(root, 'no-such-input.md') }],
-	['-InputFile が空', { input: emptyInput }],
-]) {
-	const name = `save-code-review: 止まる（${label}）`;
+// 消したモードは受け付けない
+for (const mode of ['save-code-review', 'make-patch']) {
+	const name = `止まる: 消したモード ${mode} は受け付けない`;
 	try {
 		const ctx = makeRepo();
-		ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
-		commitAll(ctx.git, 'ignore');
-		const r = runRaw(saveArgs(ctx.repo, opts), ctx.repo, ctx.env);
-		const ok = r.code === 1 && !fs.existsSync(path.join(ctx.repo, 'docs')) && savedPath(r.stdout) === null;
-		report(name, ok, `(code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
-	} catch (e) {
-		report(name, false, String(e.message));
-	}
-}
-
-// S6. -Stage pr と check で保存できる（<連番>-pr.md・<連番>-check.md）
-for (const stage of ['pr', 'check']) {
-	const name = `save-code-review: -Stage ${stage} で 01-${stage}.md に保存できる`;
-	try {
-		const ctx = makeRepo();
-		ctx.write('.gitignore', 'docs/tasks/*/code-review/\n');
-		commitAll(ctx.git, 'ignore');
-		const r = runRaw(saveArgs(ctx.repo, { stage }), ctx.repo, ctx.env);
-		const s = savedPath(r.stdout);
-		const file = path.join(ctx.repo, 'docs', 'tasks', 't', 'code-review', `01-${stage}.md`);
-		const ok = r.code === 0 && s === `docs/tasks/t/code-review/01-${stage}.md` && fs.existsSync(file) && fs.readFileSync(file, 'utf8') === saveBody && !fs.existsSync(ctx.mark);
-		report(name, ok, `(code=${r.code} saved=${s} stderr=${r.stderr.trim().slice(0, 200)})`);
-	} catch (e) {
-		report(name, false, String(e.message));
-	}
-}
-
-// ---- make-patch（コミットの前の差分をパッチのファイルにするだけ。codex は呼ばない）----
-function envWithGitConfig(env, pairs) {
-	const e = { ...env };
-	let n = Number(e.GIT_CONFIG_COUNT || '0');
-	for (const [k, v] of pairs) {
-		e[`GIT_CONFIG_KEY_${n}`] = k;
-		e[`GIT_CONFIG_VALUE_${n}`] = v;
-		n++;
-	}
-	e.GIT_CONFIG_COUNT = String(n);
-	return e;
-}
-function runPatch(ctx, { env = ctx.env, workDir = ctx.repo, omitOut = false, wrapperPath = wrapper } = {}) {
-	const out = path.join(root, `patch-${caseNo}-${Math.random().toString(16).slice(2, 8)}.patch`);
-	const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath, '-Mode', 'make-patch', '-Task', 't', '-WorkingDirectory', workDir];
-	if (!omitOut) args.push('-OutFile', out);
-	const r = spawnSync(psExe, args, { cwd: workDir, env, encoding: 'utf8' });
-	return {
-		code: r.status,
-		stderr: r.stderr || '',
-		stdout: r.stdout || '',
-		called: fs.existsSync(ctx.mark),
-		out,
-		wrote: fs.existsSync(out),
-		text: fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '',
-	};
-}
-function patchCase(name, fn) {
-	try {
-		const [ok, detail] = fn();
-		report(`make-patch: ${name}`, ok, detail);
-	} catch (e) {
-		report(`make-patch: ${name}`, false, String(e.message));
-	}
-}
-const short = (r) => `(code=${r.code} called=${r.called} wrote=${r.wrote} stderr=${r.stderr.trim().slice(0, 200)})`;
-const baseLines = 'one\ntwo\nthree\n';
-const editedLines = 'one\nthree\nfour\n';
-
-// 消した行・足した行と未追跡のファイルが入る。codex は呼ばれず、PATCH: と FILES: が出て、インデックスは変わらない
-patchCase('書き換え（消した行・足した行）と未追跡のファイルがパッチに入る。codex は呼ばれず、インデックスも変わらない', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	ctx.write('new.txt', 'brand new\n');
-	const before = gitStatus(ctx.repo);
-	const r = runPatch(ctx);
-	const ok = r.code === 0 && !r.called && r.wrote
-		&& /^-two$/m.test(r.text) && /^\+four$/m.test(r.text)
-		&& r.text.includes('new file mode') && r.text.includes('+++ b/new.txt') && r.text.includes('+brand new')
-		&& r.stdout.includes(`PATCH: ${r.out}`) && /^FILES: 2$/m.test(r.stdout)
-		&& gitStatus(ctx.repo) === before;
-	return [ok, `${short(r)} stdout=${r.stdout.trim().slice(0, 100)}`];
-});
-
-patchCase('codex が PATH に無くても作れる', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	// node だけを呼べる場所を作る（node のある場所に codex があるかもしれないため、そこは PATH に入れない）
-	const nodeOnly = path.join(root, `node-only-${caseNo}`);
-	fs.mkdirSync(nodeOnly);
-	fs.writeFileSync(path.join(nodeOnly, 'node.cmd'), `@echo off\r\n"${process.execPath}" %*\r\nexit /b %errorlevel%\r\n`);
-	const env = { ...ctx.env, PATH: [nodeOnly, gitDir, path.join(sysRoot, 'System32'), psDir].join(';') };
-	const probe = spawnSync(psExe, ['-NoProfile', '-Command', 'if (Get-Command codex -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }'], { env, encoding: 'utf8' });
-	if (probe.status !== 0) throw new Error('子のプロセスの PATH から codex を外せていません');
-	const r = runPatch(ctx, { env });
-	return [r.code === 0 && r.wrote && /^-two$/m.test(r.text), short(r)];
-});
-
-patchCase('-OutFile に書いたパッチは、確かめの一時ディレクトリの削除で消えない', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	const r = runPatch(ctx);
-	const printed = (r.stdout.match(/^PATCH: (.+?)\s*$/m) || [])[1];
-	return [r.code === 0 && printed === r.out && fs.existsSync(printed), short(r)];
-});
-
-patchCase('docs/tasks/<Task>/ の下の書き換え・未追跡のファイルは、パッチに入らない', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	ctx.write('docs/tasks/t/plan.md', 'plan\n');
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	ctx.write('docs/tasks/t/plan.md', 'plan changed\n');
-	ctx.write('docs/tasks/t/review.md', 'review\n');
-	ctx.write('docs/tasks/other/x.md', 'other task\n');
-	const r = runPatch(ctx);
-	const ok = r.code === 0 && r.text.includes('a.txt') && !r.text.includes('docs/tasks/t/') && r.text.includes('docs/tasks/other/x.md');
-	return [ok, short(r)];
-});
-
-patchCase('color.diff=always でも、色の制御文字が入らず、消した行が - で始まる', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	ctx.write('new.txt', 'brand new\n');
-	const env = envWithGitConfig(ctx.env, [['color.diff', 'always'], ['color.ui', 'always']]);
-	const r = runPatch(ctx, { env });
-	return [r.code === 0 && !r.text.includes('\u001b') && /^-two$/m.test(r.text) && r.text.includes('+brand new'), short(r)];
-});
-
-patchCase('diff.external（中身を出さない外部の diff）を付けても、消した行が残る', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	const env = envWithGitConfig(ctx.env, [['diff.external', 'node -e 0']]);
-	// 前提：付けないで git diff を打つと、外部の diff に取られて消した行が出ない
-	const plain = spawnSync('git', ['diff', 'HEAD'], { cwd: ctx.repo, env, encoding: 'utf8' });
-	if (/^-two$/m.test(plain.stdout || '')) throw new Error('前提が崩れています：diff.external が効いていません');
-	const r = runPatch(ctx, { env });
-	return [r.code === 0 && /^-two$/m.test(r.text), short(r)];
-});
-
-patchCase('.gitattributes の diff= と textconv（中身を変える）を付けても、消した行が残る', () => {
-	const ctx = makeRepo();
-	ctx.write('.gitattributes', '*.txt diff=conv\n');
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	const env = envWithGitConfig(ctx.env, [['diff.conv.textconv', 'node -e 0']]);
-	const plain = spawnSync('git', ['diff', 'HEAD'], { cwd: ctx.repo, env, encoding: 'utf8' });
-	if (/^-two$/m.test(plain.stdout || '')) throw new Error('前提が崩れています：textconv が効いていません');
-	const r = runPatch(ctx, { env });
-	return [r.code === 0 && /^-two$/m.test(r.text), short(r)];
-});
-
-// サブモジュール（作れない環境では飛ばす）
-function makeSubmoduleCtx() {
-	const ctx = makeRepo();
-	const subSrc = path.join(root, `subsrc-${caseNo}`);
-	fs.mkdirSync(subSrc, { recursive: true });
-	gitIn(subSrc, ctx.env, 'init', '-q', '-b', 'main');
-	fs.writeFileSync(path.join(subSrc, 'inner.txt'), 'inner one\n');
-	gitIn(subSrc, ctx.env, 'add', '-A');
-	gitIn(subSrc, ctx.env, 'commit', '-q', '-m', 's');
-	// git submodule は sh のスクリプトなので、Git の bin・usr\bin を PATH に足した環境で打つ（ラッパーを呼ぶ環境には足さない）
-	let gitRoot = gitDir;
-	for (let up = 0; up < 4 && !fs.existsSync(path.join(gitRoot, 'usr', 'bin', 'sh.exe')); up++) gitRoot = path.dirname(gitRoot);
-	const envSh = { ...ctx.env, PATH: [ctx.env.PATH, path.join(gitRoot, 'bin'), path.join(gitRoot, 'usr', 'bin')].join(';') };
-	gitIn(ctx.repo, envSh, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, 'sub');
-	commitAll(ctx.git, 'add sub');
-	// サブモジュールの中で、新しいコミットと未追跡の .env を作る（親から見ると参照が変わる）
-	const sub = path.join(ctx.repo, 'sub');
-	fs.writeFileSync(path.join(sub, 'inner.txt'), 'INNER_CONTENT_MARKER\n');
-	gitIn(sub, ctx.env, 'add', '-A');
-	gitIn(sub, ctx.env, 'commit', '-q', '-m', 'inner change');
-	fs.writeFileSync(path.join(sub, '.env'), 'INNER_SECRET=1\n');
-	return ctx;
-}
-let submoduleOk = true;
-try {
-	makeSubmoduleCtx();
-} catch {
-	submoduleOk = false;
-}
-if (!submoduleOk) {
-	console.log('skip make-patch のサブモジュールの確かめ（サブモジュールを作れない環境）');
-} else {
-	patchCase('diff.ignoreSubmodules=all でも、サブモジュールの参照の変更がパッチに入る', () => {
-		const ctx = makeSubmoduleCtx();
-		const env = envWithGitConfig(ctx.env, [['diff.ignoreSubmodules', 'all']]);
-		const r = runPatch(ctx, { env });
-		return [r.code === 0 && r.text.includes('Subproject commit'), short(r)];
-	});
-	patchCase('diff.submodule=diff でも、サブモジュールの中の変更・未追跡の .env はパッチに入らない', () => {
-		const ctx = makeSubmoduleCtx();
-		const env = envWithGitConfig(ctx.env, [['diff.submodule', 'diff']]);
-		const r = runPatch(ctx, { env });
-		return [r.code === 0 && r.text.includes('Subproject commit') && !r.text.includes('INNER_CONTENT_MARKER') && !r.text.includes('INNER_SECRET'), short(r)];
-	});
-}
-
-// 名前の変更
-for (const renames of ['true', 'false']) {
-	patchCase(`名前の変更は「名前を変えた」の形で、ファイル全体が2回入らない（diff.renames=${renames}）`, () => {
-		const ctx = makeRepo();
-		ctx.write('old-name.txt', Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n') + '\n');
 		commitAll(ctx.git, 'init');
-		ctx.git('mv', 'old-name.txt', 'new-name.txt');
-		ctx.write('new-name.txt', Array.from({ length: 30 }, (_, i) => (i === 5 ? 'line five changed' : `line ${i}`)).join('\n') + '\n');
-		const env = envWithGitConfig(ctx.env, [['diff.renames', renames]]);
-		const r = runPatch(ctx, { env });
-		const ok = r.code === 0 && r.text.includes('rename from old-name.txt') && r.text.includes('rename to new-name.txt')
-			&& !r.text.includes('deleted file mode') && (r.text.match(/line 20/g) || []).length === 0;
-		return [ok, short(r)];
-	});
+		const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', mode, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+		report(name, r.status !== 0 && !fs.existsSync(ctx.mark), `(code=${r.status})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
 }
 
-// 止まる
-function patchStop(name, setup, { word = '', env = null, code = null } = {}) {
-	patchCase(`止まる: ${name}`, () => {
-		const ctx = makeRepo();
-		const extra = setup(ctx) || {};
-		const r = runPatch(ctx, { env: extra.env || env || ctx.env, ...(extra.opts || {}) });
-		const codeOk = code === null ? (r.code !== 0 && r.code !== 4) : r.code === code;
-		return [!r.called && !r.wrote && codeOk && (word === '' || r.stderr.includes(word)), short(r)];
-	});
-}
-patchStop('未追跡の .env.local（既定の秘密情報）', ({ git, write }) => {
-	write('a.txt', baseLines);
-	commitAll(git, 'init');
-	write('.env.local', 'S=1\n');
-}, { word: '秘密情報' });
-patchStop('名前を変えた元の名前が秘密情報（git mv .env a.txt）', ({ git, write }) => {
-	write('.env', envBody);
-	commitAll(git, 'init');
-	git('mv', '.env', 'a.txt');
-}, { word: '秘密情報' });
-patchStop('設定ファイルが壊れている', ({ git, write }) => {
-	write('.claude/ai-team.json', '{ not json');
-	write('a.txt', baseLines);
-	commitAll(git, 'init');
-	write('a.txt', editedLines);
-}, { word: '壊れている' });
-patchStop('設定ファイルの secretPatterns に当たる未追跡のファイル', ({ git, write }) => {
-	write('.claude/ai-team.json', wrangler);
-	commitAll(git, 'init');
-	write('.wrangler/state.json', 's\n');
-}, { word: '秘密情報' });
-patchStop('-OutFile が無い', ({ git, write }) => {
-	write('a.txt', baseLines);
-	commitAll(git, 'init');
-	write('a.txt', editedLines);
-	return { opts: { omitOut: true } };
-}, { word: '-OutFile', code: 1 });
-patchStop('コミットが1つも無いリポジトリ（HEAD が無い）は、終了コード 1（4 にならない）', () => {}, { code: 1 });
-patchStop('未追跡の入れ子のリポジトリ（nested/）がある', (ctx) => {
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	const nested = path.join(ctx.repo, 'nested');
-	fs.mkdirSync(nested);
-	gitIn(nested, ctx.env, 'init', '-q', '-b', 'main');
-	fs.writeFileSync(path.join(nested, 'n.txt'), 'n\n');
-	gitIn(nested, ctx.env, 'add', '-A');
-	gitIn(nested, ctx.env, 'commit', '-q', '-m', 'n');
-	ctx.write('a.txt', editedLines);
-}, { code: 1, word: 'ふつうのファイルではない' });
-patchStop('git ls-files だけが失敗する（先に打つ git status・git diff は成功する）', (ctx) => {
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	const fake = path.join(root, `fake-git-${caseNo}`);
-	fs.mkdirSync(fake);
-	fs.writeFileSync(path.join(fake, 'git.cmd'), [
-		'@echo off',
-		':loop',
-		'if "%~1"=="" goto run',
-		'if "%~1"=="ls-files" exit /b 1',
-		'shift',
-		'goto loop',
-		':run',
-		`"${path.join(gitDir, 'git.exe')}" %*`,
-		'exit /b %errorlevel%',
-		'',
-	].join('\r\n'));
-	return { env: { ...ctx.env, PATH: `${fake};${ctx.env.PATH}` } };
-}, { code: 1, word: 'ls-files' });
-patchStop('git diff --no-index がエラーを出して 1 を返す（先に打つ git status・git diff・ls-files は成功する）', (ctx) => {
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('a.txt', editedLines);
-	ctx.write('new.txt', 'brand new\n');
-	const fake = path.join(root, `fake-git-${caseNo}`);
-	fs.mkdirSync(fake);
-	fs.writeFileSync(path.join(fake, 'git.cmd'), [
-		'@echo off',
-		':loop',
-		'if "%~1"=="" goto run',
-		'if "%~1"=="--no-index" goto fail',
-		'shift',
-		'goto loop',
-		':fail',
-		'echo fatal: simulated no-index failure 1>&2',
-		'exit /b 1',
-		':run',
-		`"${path.join(gitDir, 'git.exe')}" %*`,
-		'exit /b %errorlevel%',
-		'',
-	].join('\r\n'));
-	return { env: { ...ctx.env, PATH: `${fake};${ctx.env.PATH}` } };
-}, { code: 1, word: 'simulated no-index failure' });
-
-// 親のディレクトリが .kv/ へのジャンクション（作れない環境では飛ばす）
+// 古い呼び方の互換：-Task を渡されても止めず、何も保存しない
 {
-	let skipped = false;
-	patchCase('止まる: 親のディレクトリが .kv/ へのジャンクションで、その下のファイルを書き換えた', () => {
+	const name = '返事: 古い呼び方（-Task 付き）でも review が通り、何も保存しない';
+	try {
 		const ctx = makeRepo();
-		ctx.write('.gitignore', '.kv/\n');
-		ctx.write('.kv/a.md', 'secret\n');
 		commitAll(ctx.git, 'init');
-		try {
-			fs.symlinkSync(path.join(ctx.repo, '.kv'), path.join(ctx.repo, 'vault'), 'junction');
-		} catch {
-			skipped = true;
-			return [true, ''];
-		}
-		ctx.write('.kv/a.md', 'secret changed\n');
-		const listed = gitStatus(ctx.repo);
-		if (!listed.includes('vault')) {
-			skipped = true;
-			return [true, ''];
-		}
-		const r = runPatch(ctx);
-		return [!r.called && !r.wrote && r.code !== 0 && r.code !== 4 && r.stderr.includes('秘密情報'), `${short(r)} status=${listed.trim().slice(0, 100)}`];
-	});
-	if (skipped) console.log('skip make-patch のジャンクションの確かめ（ジャンクションを作れない・Git がジャンクションの下を変更として見ない環境）');
+		const tempBefore = listTemp();
+		const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'review', '-Task', 't', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+		const ok = r.status === 0
+			&& fs.existsSync(ctx.mark)
+			&& /^fake reply\s*$/m.test(r.stdout || '')
+			&& !fs.existsSync(path.join(ctx.repo, 'docs'))
+			&& listTemp() === tempBefore;
+		report(name, ok, `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
 }
 
-// 変更が無い
-patchCase('変更が無いときは終了コード 4 で、-OutFile を書かない', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	const r = runPatch(ctx);
-	return [r.code === 4 && !r.wrote && !r.called, short(r)];
-});
-patchCase('docs/tasks/<Task>/ の下だけが変わったときも終了コード 4 で、-OutFile を書かない', () => {
-	const ctx = makeRepo();
-	ctx.write('docs/tasks/t/plan.md', 'plan\n');
-	commitAll(ctx.git, 'init');
-	ctx.write('docs/tasks/t/plan.md', 'plan changed\n');
-	ctx.write('docs/tasks/t/review.md', 'review\n');
-	const r = runPatch(ctx);
-	return [r.code === 4 && !r.wrote, short(r)];
-});
-
-// 名前が - の未追跡のファイル
-patchCase('名前が - の未追跡のファイル：入力待ちにならず、中身がパッチに入る', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('-', 'DASH_FILE_CONTENT\n');
-	const r = runPatch(ctx);
-	return [r.code === 0 && r.text.includes('DASH_FILE_CONTENT'), short(r)];
-});
-
-// 日本語・空白のパス
-patchCase('日本語・空白のパスの未追跡のファイルが、化けずにパッチに入る', () => {
-	const ctx = makeRepo();
-	ctx.write('a.txt', baseLines);
-	commitAll(ctx.git, 'init');
-	ctx.write('メモ 一覧.txt', '日本語の中身\n');
-	const r = runPatch(ctx);
-	return [r.code === 0 && r.text.includes('メモ 一覧.txt') && r.text.includes('+日本語の中身'), short(r)];
-});
-
-// worktree から呼ぶ
-patchCase('worktree を作業の根にして呼べる', () => {
-	const main = makeRepo();
-	main.write('a.txt', baseLines);
-	commitAll(main.git, 'init');
-	const wt = path.join(root, `wt-patch-${caseNo}`);
-	gitIn(main.repo, main.env, 'worktree', 'add', '-q', '-b', 'feature', wt);
-	fs.writeFileSync(path.join(wt, 'a.txt'), editedLines);
-	const r = runPatch(main, { workDir: wt });
-	return [r.code === 0 && /^-two$/m.test(r.text) && !r.called, short(r)];
-});
+// 導入済みのリポジトリの互換：設定に plannerWritable が残っていても、健さんを呼べる
+expectPass('設定に plannerWritable が残っていても consult が通る', ({ git, write }) => {
+	write('.claude/ai-team.json', j({ secretPatterns: [], plannerWritable: [] }));
+	commitAll(git, 'init');
+}, { mode: 'consult' });
 
 finish();
