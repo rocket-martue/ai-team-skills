@@ -14,6 +14,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 ## 前提
 
 - 日本語で進める WordPress（PHP、phpcs）の案件向け。ほかの技術スタックでは、リポジトリの `docs/team/common-rules.md` と `.claude/settings.json` の allow を書き換える
+- Claude Code（VS Code の拡張か CLI）で使う。Cursor でも、Claude Code の拡張（か Cursor のターミナルで打つ `claude`）なら同じように動く。Cursor 自体のチャット・Agent では、モデルに Claude を選んでも動かない（プラグイン・フック・エージェントは Claude Code の仕組みのため）
 - フックに Node.js が要る（node が PATH に無いと、フックは何も言わずに外れる）
 - 健さんは使わなくても回る。使うときのラッパーは Windows PowerShell 用で、各 PC に Codex CLI と健さんの AGENTS.md が要る
 
