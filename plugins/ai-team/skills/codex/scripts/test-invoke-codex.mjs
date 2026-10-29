@@ -551,7 +551,9 @@ for (const mode of ['review', 'consult']) {
 			&& !/^SAVED:/m.test(r.stdout)
 			&& gitStatus(ctx) === before
 			&& !fs.existsSync(path.join(ctx.repo, 'docs'))
-			&& listTemp() === tempBefore;
+			&& listTemp() === tempBefore
+			// consult は Git のリポジトリでも read-only のまま（#97 で引数を足したときに崩れていないか）
+			&& (mode !== 'consult' || / -s read-only /.test(fs.readFileSync(ctx.mark, 'utf8')));
 		report(name, ok, `(code=${r.code} stdout=${r.stdout.trim().slice(0, 200)} stderr=${r.stderr.trim().slice(0, 200)})`);
 	} catch (e) {
 		report(name, false, String(e.message));
@@ -567,7 +569,10 @@ function runNoGitConsult(name, config) {
 		fs.writeFileSync(path.join(dir, '.claude', 'ai-team.json'), config);
 	}
 	const mark = path.join(root, `mark-nogit-consult-${name}.txt`);
-	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', dir], { cwd: dir, env: buildEnv(mark), encoding: 'utf8' });
+	const env = buildEnv(mark);
+	// %TEMP% が Git の作業ツリーの下にある PC でも、テストの外のリポジトリを拾わない
+	env.GIT_CEILING_DIRECTORIES = root;
+	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', dir], { cwd: dir, env, encoding: 'utf8' });
 	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', called: fs.existsSync(mark), args: fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', dir };
 }
 {
