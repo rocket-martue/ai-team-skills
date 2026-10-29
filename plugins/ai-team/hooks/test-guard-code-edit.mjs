@@ -336,6 +336,10 @@ try {
 		check('forMatch: darwin（Mac）では .ENV を .env にそろえる', forMatch('.ENV', 'darwin') === '.env');
 		check('forMatch: win32 では WP-CONFIG.PHP を wp-config.php にそろえる', forMatch('WP-CONFIG.PHP', 'win32') === 'wp-config.php');
 		check('forMatch: linux ではそろえない（大文字小文字を区別するファイルシステム）', forMatch('.ENV', 'linux') === '.ENV');
+		// 場所の判定（中か外か）は Windows だけそろえる。Mac には大文字小文字を区別する APFS もあり、Repo と repo を同じ場所と見ないため
+		const { forPath } = await import('./ai-team-config.mjs');
+		check('forPath: darwin（Mac）では場所の判定をそろえない（/x/Repo と /x/repo は別の場所）', forPath('/x/Repo', 'darwin') === '/x/Repo');
+		check('forPath: win32 では場所の判定をそろえる', forPath('C:/X/Repo', 'win32') === 'c:/x/repo');
 	}
 
 	// ---- settings.json ----

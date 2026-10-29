@@ -42,6 +42,13 @@ export function forMatch(p, platform = process.platform) {
 	return platform === 'win32' || platform === 'darwin' ? p.toLowerCase() : p;
 }
 
+// 場所の同一性・包含（リポジトリの中か外か）の判定に使うそろえ方。Windows だけ小文字にそろえる。
+// Mac には大文字小文字を区別する APFS のボリュームもあり、そこで Repo と repo を同じ場所と見ると、
+// リポジトリの外の編集を中と取り違えるので、場所の判定ではそろえない（秘密情報の照らしは forMatch で厳しいほうに倒す。#100）
+export function forPath(p, platform = process.platform) {
+	return platform === 'win32' ? p.toLowerCase() : p;
+}
+
 // そのパス自体がリンク（Windows のジャンクションを含む）か。リンク先の有無は問わない。
 export function isLink(p) {
 	try {
@@ -411,6 +418,6 @@ const self = fileURLToPath(import.meta.url);
 const entry = process.argv[1] ? realPath(process.argv[1]) : null;
 const selfReal = realPath(self);
 
-if (entry !== null && selfReal !== null && forMatch(entry) === forMatch(selfReal)) {
+if (entry !== null && selfReal !== null && forPath(entry) === forPath(selfReal)) {
 	process.exit(cli(process.argv.slice(2)));
 }

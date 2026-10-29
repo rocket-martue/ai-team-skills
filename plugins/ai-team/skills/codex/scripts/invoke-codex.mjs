@@ -42,11 +42,16 @@ function samePath(a, b) {
 }
 
 // 一時ディレクトリを、持ち主だけが読み書きできる形で作る（Linux の /tmp は共有なので、
-// codex の進み具合（読んだコードや差分が入る）をほかのユーザーに読ませないため）
+// codex の進み具合（読んだコードや差分が入る）をほかのユーザーに読ませないため）。
+// Windows は前と同じく %TEMP%\claude\ の下（%TEMP% はユーザーごと）。Mac・Linux は共有の名前のフォルダ（/tmp/claude）を挟まず、
+// 一時ディレクトリの直下に作る（先にほかのユーザーが /tmp/claude を作っていると、その下に作れないため）
 function makePrivateTempDir(prefix) {
-	const parent = path.join(os.tmpdir(), 'claude');
-	fs.mkdirSync(parent, { recursive: true });
-	return fs.mkdtempSync(path.join(parent, prefix));
+	if (isWindows) {
+		const parent = path.join(os.tmpdir(), 'claude');
+		fs.mkdirSync(parent, { recursive: true });
+		return fs.mkdtempSync(path.join(parent, prefix));
+	}
+	return fs.mkdtempSync(path.join(os.tmpdir(), `claude-${prefix}`));
 }
 
 // ---- 引数 ----

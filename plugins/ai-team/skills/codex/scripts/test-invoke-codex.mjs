@@ -40,6 +40,8 @@ fs.writeFileSync(fakeJs, [
 	"const i = args.indexOf('-o');",
 	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(args[i + 1], process.env.FAKE_CODEX_REPLY || 'fake reply');",
 	"fs.writeFileSync(process.env.FAKE_CODEX_MARK, ['called', ...args].join(' '));",
+	// 引数を配列のままでも残す（空白を含むパスでも、要素ごとに比べられるように）
+	"fs.writeFileSync(process.env.FAKE_CODEX_MARK + '.json', JSON.stringify(args));",
 	// 返事のファイルを置くディレクトリ（ラッパーの一時ディレクトリ）の権限を、印の隣に書く（Mac・Linux で持ち主だけかを見るため）
 	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(process.env.FAKE_CODEX_MARK + '.dirmode', (fs.statSync(require('path').dirname(args[i + 1])).mode & 0o777).toString(8));",
 	'process.exit(0);',
@@ -749,8 +751,22 @@ if (isWindows) {
 
 	// 中継：.mjs を直接呼んだときと同じ引数が偽物に届き、終了コードと日本語の返事がそのまま返る
 	const runPs1 = (args, opts) => spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPs1, ...args], { encoding: 'utf8', ...opts });
-	// 一時ディレクトリの名前（-o の値）は呼ぶたびに違うので、比べる前にそろえる
-	const normalize = (s) => s.replace(/ -o \S+/g, ' -o <返事のファイル>');
+	// 一時ディレクトリの名前（-o の値）は呼ぶたびに違うので、比べる前にそろえる（配列で比べるので、TEMP のパスに空白があってもずれない）
+	const normalize = (s) => {
+		try {
+			const a = JSON.parse(s);
+			const i = a.indexOf('-o');
+			if (i >= 0 && i + 1 < a.length) a[i + 1] = '<返事のファイル>';
+			return JSON.stringify(a);
+		} catch {
+			return '';
+		}
+	};
+	const readArgs = (mark) => (fs.existsSync(`${mark}.json`) ? fs.readFileSync(`${mark}.json`, 'utf8') : '');
+	const clearMarks = (mark) => {
+		fs.rmSync(mark, { force: true });
+		fs.rmSync(`${mark}.json`, { force: true });
+	};
 	{
 		const name = '中継: .ps1 から呼んでも .mjs と同じ引数が届き、日本語の返事が化けずに返る（consult）';
 		try {
@@ -759,10 +775,10 @@ if (isWindows) {
 			const reply = '健さんの返事：日本語のテスト';
 			const args = ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo];
 			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: { ...ctx.env, FAKE_CODEX_REPLY: reply } });
-			const directArgs = fs.existsSync(ctx.mark) ? fs.readFileSync(ctx.mark, 'utf8') : '';
-			fs.rmSync(ctx.mark, { force: true });
+			const directArgs = readArgs(ctx.mark);
+			clearMarks(ctx.mark);
 			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: { ...ctx.env, FAKE_CODEX_REPLY: reply } });
-			const ps1Args = fs.existsSync(ctx.mark) ? fs.readFileSync(ctx.mark, 'utf8') : '';
+			const ps1Args = readArgs(ctx.mark);
 			const ok = direct.status === 0 && viaPs1.status === 0
 				&& directArgs !== '' && normalize(directArgs) === normalize(ps1Args)
 				&& (direct.stdout || '').includes(reply) && (viaPs1.stdout || '').includes(reply);
@@ -778,10 +794,10 @@ if (isWindows) {
 			commitAll(ctx.git, 'init');
 			const args = ['-WorkingDirectory', `${ctx.repo}\\`, '-Mode', 'consult', '-PromptFile', promptFile];
 			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: ctx.env });
-			const directArgs = fs.existsSync(ctx.mark) ? fs.readFileSync(ctx.mark, 'utf8') : '';
-			fs.rmSync(ctx.mark, { force: true });
+			const directArgs = readArgs(ctx.mark);
+			clearMarks(ctx.mark);
 			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: ctx.env });
-			const ps1Args = fs.existsSync(ctx.mark) ? fs.readFileSync(ctx.mark, 'utf8') : '';
+			const ps1Args = readArgs(ctx.mark);
 			const ok = direct.status === 0 && viaPs1.status === 0 && directArgs !== '' && normalize(directArgs) === normalize(ps1Args);
 			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stderr=${(viaPs1.stderr || '').trim().slice(0, 200)})`);
 		} catch (e) {
