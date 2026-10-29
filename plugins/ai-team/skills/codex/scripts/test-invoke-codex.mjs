@@ -169,26 +169,28 @@ function runWrapper(ctx, base, mode = 'review', workDir = ctx.repo, wrapperPath 
 	return { code: r.status, stderr: r.stderr || '', stdout: r.stdout || '', called: fs.existsSync(ctx.mark) };
 }
 
-// ---- 最初の確かめ：子プロセスの PATH で、最初に見つかる codex が偽物か ----
-// ラッパーと同じ順（Windows：codex.exe・codex.cmd・codex.ps1・codex、Mac・Linux：codex）で PATH を前から探す
+// ---- 最初の確かめ：子プロセスの PATH で、ラッパーが選ぶ codex が偽物か ----
+// ラッパー（invoke-codex.mjs の findCodex）と同じ見方で PATH を前から探す。存在だけでなく「使えるか」まで見る
+// （ラッパーは、隣に codex.js の無いシム（Windows）や実行できない codex（Mac・Linux。noexec の一時ディレクトリなど）を飛ばして
+// 後ろを探す。node のフォルダに本物の codex があると、そこに届くため）
 {
 	const env = buildEnv(path.join(root, 'mark-probe.txt'));
-	const names = isWindows ? ['codex.exe', 'codex.cmd', 'codex.ps1', 'codex'] : ['codex'];
-	let first = null;
-	for (const dir of env.PATH.split(path.delimiter)) {
-		if (names.some((n) => fs.existsSync(path.join(dir, n)))) {
-			first = dir;
-			break;
+	const usable = (dir) => {
+		if (isWindows) {
+			if (fs.existsSync(path.join(dir, 'codex.exe'))) return true;
+			const shim = ['codex.cmd', 'codex.ps1', 'codex'].some((n) => fs.existsSync(path.join(dir, n)));
+			return shim && fs.existsSync(path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'));
 		}
-	}
+		try {
+			fs.accessSync(path.join(dir, 'codex'), fs.constants.X_OK);
+			return fs.statSync(path.join(dir, 'codex')).isFile();
+		} catch {
+			return false;
+		}
+	};
+	const first = env.PATH.split(path.delimiter).find((dir) => dir.trim() !== '' && usable(dir)) || null;
 	if (first === null || path.resolve(first).toLowerCase() !== path.resolve(fakeDir).toLowerCase()) {
-		console.error(`最初に見つかる codex が偽物ではありません（${first}）。ラッパーを呼ばずに落とします。`);
-		fs.rmSync(root, { recursive: true, force: true });
-		process.exit(1);
-	}
-	// ラッパーは、隣に codex.js の無いシムを飛ばして PATH の後ろ（本物があるかもしれない）を探すので、偽物の codex.js があることも確かめる
-	if (!fs.existsSync(fakeJs)) {
-		console.error(`偽物の codex.js がありません（${fakeJs}）。ラッパーが本物に届くかもしれないので、呼ばずに落とします。`);
+		console.error(`ラッパーが選ぶ codex が偽物ではありません（${first}）。本物に届くかもしれないので、ラッパーを呼ばずに落とします。`);
 		fs.rmSync(root, { recursive: true, force: true });
 		process.exit(1);
 	}

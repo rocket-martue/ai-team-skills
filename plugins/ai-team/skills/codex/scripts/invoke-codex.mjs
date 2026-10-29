@@ -35,16 +35,19 @@ function stopWrapper(message, code = 1) {
 	throw new Stop(message, code);
 }
 
-// パスの比べ方（Windows と Mac（既定の APFS）は大文字小文字を区別しない）。
-// 取り違えると止める側に倒れる比べ方（参照画像と出力が同じか）に使う
-const caseInsensitive = isWindows || process.platform === 'darwin';
-function samePath(a, b) {
-	return caseInsensitive ? a.toLowerCase() === b.toLowerCase() : a === b;
+// パスの比べ方は2つある。共有モジュール（hooks/ai-team-config.mjs）の2つのそろえ方と対になっている
+// （ここでは共有モジュールを import しない。確かめは子プロセスの CLI で行うため）。
+//
+// - sameCaseFolded：Windows と Mac（既定の APFS）で大文字小文字をそろえて比べる。共有モジュールの forMatch と同じ。
+//   取り違えると止める側に倒れる比べ方（参照画像と出力が同じか・生成画像の保存先の下か）に使う
+// - sameLocation：Windows だけそろえる。共有モジュールの forPath と同じ。場所が同じか（設定を読む根を重ねないため）に使う。
+//   Mac には大文字小文字を区別する APFS もあり、別の場所の Repo と repo を同じと見ると、片方の設定を読み落とすため
+//   （重ねて読んでも害は無いので、読み落とさない側に倒す。#100）
+const foldsForMatch = isWindows || process.platform === 'darwin';
+function sameCaseFolded(a, b) {
+	return foldsForMatch ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-// 場所が同じか（設定を読む根を重ねないため）。Windows だけ大文字小文字をそろえる。
-// Mac には大文字小文字を区別する APFS もあり、別の場所の Repo と repo を同じと見ると、片方の設定を読み落とすため
-// （ガードの forPath と同じ考え方。重ねて読んでも害は無いので、読み落とさない側に倒す。#100）
 function sameLocation(a, b) {
 	return isWindows ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
@@ -373,10 +376,10 @@ function main(cleanups) {
 			why = `IMAGE_PATH の画像が見つかりません: ${declared}`;
 			if (isFile(declared)) {
 				const resolved = path.resolve(declared);
-				const under = caseInsensitive ? resolved.toLowerCase().startsWith(generatedRoot.toLowerCase()) : resolved.startsWith(generatedRoot);
+				const under = foldsForMatch ? resolved.toLowerCase().startsWith(generatedRoot.toLowerCase()) : resolved.startsWith(generatedRoot);
 				if (!under) {
 					why = `IMAGE_PATH が生成画像の保存先（${generatedRoot}）の下にありません: ${resolved}`;
-				} else if (refOriginals.some((o) => samePath(o, resolved))) {
+				} else if (refOriginals.some((o) => sameCaseFolded(o, resolved))) {
 					why = `IMAGE_PATH が今回渡した参照画像と同じです: ${resolved}`;
 				} else {
 					found = resolved;

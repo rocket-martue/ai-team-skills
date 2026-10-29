@@ -23,8 +23,10 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 # Windows PowerShell 5.1 が外のコマンドに引数を渡すときの癖を、2つ避ける（前の .ps1 は param() で受けていたので起きなかった）
 # - 空白を含む値を "…" で囲むが、末尾の \ を重ねない。"C:\x y\" の \" が引用符と読まれ、後ろの引数が1つに溶ける → 末尾の \ を重ねる
 # - 空の値（-Base "" など）を渡さずに落とす。後ろの引数が1つずつずれる → 空の値は "" として渡す
-# PowerShell 7（pwsh）は引数を自分で正しく引用するので、この直しをすると逆に崩れる。5.1 以下のときだけ直す
-$legacyPassing = $PSVersionTable.PSVersion.Major -lt 6
+# 引数を自分で正しく引用するのは、$PSNativeCommandArgumentPassing があって Legacy でないとき（pwsh 7.3 以降の既定）だけ。
+# そのときにこの直しをすると逆に崩れるので、直さない。それ以外（5.1・pwsh 6.0〜7.2・Legacy にしたとき）は直す
+$passingVar = Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue
+$legacyPassing = ($null -eq $passingVar) -or ([string]$passingVar -eq 'Legacy')
 $passArgs = @(foreach ($a in $args) {
 	$s = [string]$a
 	if (-not $legacyPassing) { $s }
