@@ -740,10 +740,29 @@ if (isWindows) {
 			const pnpmDir = path.join(root, 'pnpm-bin');
 			fs.mkdirSync(pnpmDir, { recursive: true });
 			fs.writeFileSync(path.join(pnpmDir, 'codex.cmd'), '@echo off\r\nexit /b 0\r\n');
-			const env = { ...ctx.env, PATH: [pnpmDir, ...ctx.env.PATH.split(';').filter((d) => d !== fakeDir)].join(';') };
+			// 偽物だけでなく、codex のあるフォルダは全部外す（node のフォルダに本物の codex があると、ラッパーが後ろまで探して本物を呼ぶため）
+			const hasCodex = (d) => ['codex.exe', 'codex.cmd', 'codex.ps1', 'codex'].some((n) => fs.existsSync(path.join(d, n)));
+			const env = { ...ctx.env, PATH: [pnpmDir, ...ctx.env.PATH.split(';').filter((d) => d !== fakeDir && !hasCodex(d))].join(';') };
 			const r = runNode(wrapper, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env });
 			const ok = r.status === 1 && !fs.existsSync(ctx.mark) && (r.stderr || '').includes('codex.js') && (r.stderr || '').includes('npm install -g @openai/codex');
 			report(name, ok, `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+
+	// PATH の前に codex.js の無いシム、後ろに npm で入れた codex がある：前のシムで止まらず、後ろの codex を呼ぶ
+	{
+		const name = '止まらない: codex.js の無いシムが PATH の前にあっても、後ろの npm の codex を呼ぶ';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const pnpmDir = path.join(root, 'pnpm-bin-front');
+			fs.mkdirSync(pnpmDir, { recursive: true });
+			fs.writeFileSync(path.join(pnpmDir, 'codex.cmd'), '@echo off\r\nexit /b 0\r\n');
+			const env = { ...ctx.env, PATH: [pnpmDir, ...ctx.env.PATH.split(';')].join(';') };
+			const r = runNode(wrapper, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env });
+			report(name, r.status === 0 && fs.existsSync(ctx.mark), `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
 		} catch (e) {
 			report(name, false, String(e.message));
 		}
@@ -799,6 +818,23 @@ if (isWindows) {
 			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: ctx.env });
 			const ps1Args = readArgs(ctx.mark);
 			const ok = direct.status === 0 && viaPs1.status === 0 && directArgs !== '' && normalize(directArgs) === normalize(ps1Args);
+			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stderr=${(viaPs1.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+	{
+		const name = '中継: 空の値（-Base ""）でも落とさずに渡し、後ろの引数がずれない（review）';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const args = ['-Base', '', '-Mode', 'review', '-WorkingDirectory', ctx.repo];
+			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: ctx.env });
+			const directArgs = readArgs(ctx.mark);
+			clearMarks(ctx.mark);
+			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: ctx.env });
+			const ps1Args = readArgs(ctx.mark);
+			const ok = direct.status === 0 && viaPs1.status === 0 && directArgs.includes('--uncommitted') && normalize(directArgs) === normalize(ps1Args);
 			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stderr=${(viaPs1.stderr || '').trim().slice(0, 200)})`);
 		} catch (e) {
 			report(name, false, String(e.message));

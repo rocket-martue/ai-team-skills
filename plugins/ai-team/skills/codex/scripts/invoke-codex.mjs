@@ -78,10 +78,12 @@ function parseArgs(argv) {
 // ---- codex の探し方 ----
 // Windows：PATH から codex を探し、.exe ならそのまま起動する。npm のシム（.cmd・.ps1）なら、隣の
 // node_modules/@openai/codex/bin/codex.js を今の node で直接起動する（シェルを通さない。実行ポリシーで止まらず、
-// .cmd を通したときの引数の引用の崩れも無い）。隣に無ければ（pnpm・bun などで入れた）、直し方を出して止める。
+// .cmd を通したときの引数の引用の崩れも無い）。隣に無いシム（pnpm・bun などで入れた）は飛ばして PATH の後ろも探し、
+// 最後まで使えるものが無ければ、見つけたシムと直し方を出して止める。
 // Mac・Linux：PATH の codex をそのまま起動する。
 function findCodex() {
 	const dirs = (process.env.PATH || '').split(path.delimiter).filter((d) => d.trim() !== '');
+	let skippedShim = null;
 	for (const dir of dirs) {
 		if (isWindows) {
 			const exe = path.join(dir, 'codex.exe');
@@ -90,12 +92,15 @@ function findCodex() {
 			if (shim !== undefined) {
 				const js = path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
 				if (isFile(js)) return { command: process.execPath, prefix: [js] };
-				stopWrapper(`codex のシム（${shim}）の隣に node_modules/@openai/codex/bin/codex.js がありません（pnpm・bun などで入れたときの形）。npm install -g @openai/codex で入れ直すか、codex.exe を PATH に置いてください。`);
+				if (skippedShim === null) skippedShim = shim;
 			}
 		} else {
 			const bin = path.join(dir, 'codex');
 			if (isExecutable(bin)) return { command: bin, prefix: [] };
 		}
+	}
+	if (skippedShim !== null) {
+		stopWrapper(`codex のシム（${skippedShim}）の隣に node_modules/@openai/codex/bin/codex.js がありません（pnpm・bun などで入れたときの形）。npm install -g @openai/codex で入れ直すか、codex.exe を PATH に置いてください。`);
 	}
 	return null;
 }
