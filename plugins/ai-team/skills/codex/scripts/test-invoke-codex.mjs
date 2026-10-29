@@ -186,6 +186,12 @@ function runWrapper(ctx, base, mode = 'review', workDir = ctx.repo, wrapperPath 
 		fs.rmSync(root, { recursive: true, force: true });
 		process.exit(1);
 	}
+	// ラッパーは、隣に codex.js の無いシムを飛ばして PATH の後ろ（本物があるかもしれない）を探すので、偽物の codex.js があることも確かめる
+	if (!fs.existsSync(fakeJs)) {
+		console.error(`偽物の codex.js がありません（${fakeJs}）。ラッパーが本物に届くかもしれないので、呼ばずに落とします。`);
+		fs.rmSync(root, { recursive: true, force: true });
+		process.exit(1);
+	}
 }
 
 // 止まる：偽物の印が無く、ラッパーが期待の言葉で止まる
@@ -871,8 +877,8 @@ if (isWindows) {
 		}
 	}
 } else {
-	console.log('skip codex のシムの隣に codex.js が無いときの確かめ（Windows だけ）');
-	console.log('skip 中継（invoke-codex.ps1）の確かめ 3 つ（Windows だけ）');
+	console.log('skip codex のシムの隣に codex.js が無いときの確かめ 2 つ（Windows だけ）');
+	console.log('skip 中継（invoke-codex.ps1）の確かめ 5 つ（Windows だけ）');
 
 	// Mac・Linux：ラッパーの一時ディレクトリは持ち主だけが読み書きできる（Linux の /tmp は共有のため）
 	{

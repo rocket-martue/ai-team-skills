@@ -35,10 +35,18 @@ function stopWrapper(message, code = 1) {
 	throw new Stop(message, code);
 }
 
-// パスの比べ方（Windows と Mac（既定の APFS）は大文字小文字を区別しない）
+// パスの比べ方（Windows と Mac（既定の APFS）は大文字小文字を区別しない）。
+// 取り違えると止める側に倒れる比べ方（参照画像と出力が同じか）に使う
 const caseInsensitive = isWindows || process.platform === 'darwin';
 function samePath(a, b) {
 	return caseInsensitive ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+// 場所が同じか（設定を読む根を重ねないため）。Windows だけ大文字小文字をそろえる。
+// Mac には大文字小文字を区別する APFS もあり、別の場所の Repo と repo を同じと見ると、片方の設定を読み落とすため
+// （ガードの forPath と同じ考え方。重ねて読んでも害は無いので、読み落とさない側に倒す。#100）
+function sameLocation(a, b) {
+	return isWindows ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 // 一時ディレクトリを、持ち主だけが読み書きできる形で作る（Linux の /tmp は共有なので、
@@ -246,7 +254,7 @@ function main(cleanups) {
 	// 作業の根と、メインのチェックアウト（worktree list の1件目）の根の両方で、設定ファイルを読む
 	const checkRoots = [repoRoot];
 	const mainRoot = getMainRoot(repoRoot);
-	if (!samePath(mainRoot, repoRoot)) checkRoots.push(mainRoot);
+	if (!sameLocation(mainRoot, repoRoot)) checkRoots.push(mainRoot);
 
 	const checkDir = makePrivateTempDir('codex-check-');
 	let checkCode = 1;

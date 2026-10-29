@@ -55,7 +55,7 @@ allowed-tools:
 - 秘密情報の照らし合わせは、ガードと同じ共有モジュール（プラグインの `hooks/ai-team-config.mjs`）で行う。作業の根とメインのチェックアウトの根の `.claude/ai-team.json`（無ければ `repo-files/claude/ai-team.json`）の `secretPatterns` も足す。設定ファイルが壊れていれば、どのモードでも呼ばずに止まる
 - `review`：健さんに渡る変更のすべてのパス（`git status --porcelain -z -uall` の全項目と、`-Base` のときは `git diff --name-only --no-renames <基準>...HEAD`）を照らし、1つでも秘密情報に当たれば呼ばずに止まる。どちらも `--ignore-submodules=none` を付けて、サブモジュールの `ignore` の設定があっても、サブモジュールの変更を拾う（照らすのはサブモジュールの置き場所のパスまで。中のファイルは照らさない）
 - `image`：参照画像を空の一時ディレクトリにコピーしてそこで呼ぶ（リポジトリには触れない）。`IMAGE_PATH:` の画像が `<CODEX_HOME>/generated_images/` の下にあり、参照画像と別のファイルのときだけ `IMAGE:` を出す
-- `codex` が PATH に無ければ、入れ方を出して止まる（`check` は `codex` が無くても動く）。Windows で npm のシム（`codex.cmd`）なら、隣の `node_modules/@openai/codex/bin/codex.js` を node で直接起動する（シェルを通さない）。隣に無い（pnpm・bun などで入れた）ときは、直し方を出して止まる
+- `codex` が PATH に無ければ、入れ方を出して止まる（`check` は `codex` が無くても動く）。Windows で npm のシム（`codex.cmd`）なら、隣の `node_modules/@openai/codex/bin/codex.js` を node で直接起動する（シェルを通さない）。隣に無い（pnpm・bun などで入れた）シムは飛ばして PATH の後ろも探し、最後まで使えるものが無いときだけ、直し方を出して止まる
 
 ## 前の呼び方
 
