@@ -34,7 +34,7 @@ model: haiku
 
 相談（`consult`）と画像の生成（`image`）だけ頼める。頼む前に `${CLAUDE_PLUGIN_ROOT}/skills/codex/SKILL.md` を Read で読んで従い（頼みの文の頭は「メジェドから」）、次の形で呼ぶ（Read で開いた SKILL.md の中の `${CLAUDE_PLUGIN_ROOT}` は展開されないので、この形を使う）。
 
-`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" -Mode <consult|image> -PromptFile <一時ファイル> [-Image "<画像1>|<画像2>"] [-WorkingDirectory <パス>]`
+`node "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.mjs" -Mode <consult|image> -PromptFile <一時ファイル> [-Image "<画像1>|<画像2>"] [-WorkingDirectory <パス>]`
 
 `image` で作った画像は、ラッパーが出した `IMAGE:` のパスから、ガネーシャに言われた置き場所へコピーする。`IMAGE:` が出ずに止まったら、コピーせずに報告する。
 

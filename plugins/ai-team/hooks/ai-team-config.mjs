@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ガード（guard-code-edit.mjs）と健さんのラッパー（invoke-codex.ps1）の両方が使う判定の正本。
+// ガード（guard-code-edit.mjs）と健さんのラッパー（invoke-codex.mjs）の両方が使う判定の正本。
 // - 秘密情報の既定の一覧
 // - リンク（シンボリックリンク・ジャンクション）をたどる関数
 // - グロブを正規表現に直す関数
@@ -35,10 +35,11 @@ export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '�
 // 呼び名の長さの上限（文字数）。
 const NAME_MAX_LENGTH = 40;
 
-// Windows のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
-// パターンとの照合も包含の判定も、Windows では小文字にそろえてから行う。
-export function forMatch(p) {
-	return process.platform === 'win32' ? p.toLowerCase() : p;
+// Windows と Mac（既定の APFS）のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
+// パターンとの照合も包含の判定も、Windows と Mac では小文字にそろえてから行う（#100）。
+// platform は確かめのために差し替えられるようにしてある（ふだんは今の OS）。
+export function forMatch(p, platform = process.platform) {
+	return platform === 'win32' || platform === 'darwin' ? p.toLowerCase() : p;
 }
 
 // そのパス自体がリンク（Windows のジャンクションを含む）か。リンク先の有無は問わない。

@@ -16,6 +16,7 @@
       "Bash(git show:*)",
       "Bash(vendor/bin/phpcs:*)",
       "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.ps1\" *)",
+      "Bash(node \"*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.mjs\" *)",
       "PowerShell(gh pr list:*)",
       "PowerShell(gh pr ls:*)",
       "PowerShell(gh pr view:*)",
