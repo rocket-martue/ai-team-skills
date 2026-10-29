@@ -39,10 +39,10 @@ function stopWrapper(message, code = 1) {
 // （ここでは共有モジュールを import しない。確かめは子プロセスの CLI で行うため）。
 //
 // - sameCaseFolded：Windows と Mac（既定の APFS）で大文字小文字をそろえて比べる。共有モジュールの forMatch と同じ。
-//   取り違えると止める側に倒れる比べ方（参照画像と出力が同じか・生成画像の保存先の下か）に使う
-// - sameLocation：Windows だけそろえる。共有モジュールの forPath と同じ。場所が同じか（設定を読む根を重ねないため）に使う。
-//   Mac には大文字小文字を区別する APFS もあり、別の場所の Repo と repo を同じと見ると、片方の設定を読み落とすため
-//   （重ねて読んでも害は無いので、読み落とさない側に倒す。#100）
+//   取り違えると止める側に倒れる比べ方（参照画像と出力が同じか）に使う
+// - sameLocation・isUnderLocation：Windows だけそろえる。共有モジュールの forPath と同じ。場所の判定に使う
+//   （設定を読む根を重ねないため・生成画像の保存先の下か）。Mac には大文字小文字を区別する APFS もあり、
+//   別の場所の Repo と repo を同じと見ると、設定を読み落としたり、保存先の外の画像を受け入れたりするため（#100）
 const foldsForMatch = isWindows || process.platform === 'darwin';
 function sameCaseFolded(a, b) {
 	return foldsForMatch ? a.toLowerCase() === b.toLowerCase() : a === b;
@@ -50,6 +50,10 @@ function sameCaseFolded(a, b) {
 
 function sameLocation(a, b) {
 	return isWindows ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function isUnderLocation(child, parentWithSep) {
+	return isWindows ? child.toLowerCase().startsWith(parentWithSep.toLowerCase()) : child.startsWith(parentWithSep);
 }
 
 // 一時ディレクトリを、持ち主だけが読み書きできる形で作る（Linux の /tmp は共有なので、
@@ -376,7 +380,7 @@ function main(cleanups) {
 			why = `IMAGE_PATH の画像が見つかりません: ${declared}`;
 			if (isFile(declared)) {
 				const resolved = path.resolve(declared);
-				const under = foldsForMatch ? resolved.toLowerCase().startsWith(generatedRoot.toLowerCase()) : resolved.startsWith(generatedRoot);
+				const under = isUnderLocation(resolved, generatedRoot);
 				if (!under) {
 					why = `IMAGE_PATH が生成画像の保存先（${generatedRoot}）の下にありません: ${resolved}`;
 				} else if (refOriginals.some((o) => sameCaseFolded(o, resolved))) {
