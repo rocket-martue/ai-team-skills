@@ -40,6 +40,8 @@ fs.writeFileSync(fakeJs, [
 	"const i = args.indexOf('-o');",
 	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(args[i + 1], process.env.FAKE_CODEX_REPLY || 'fake reply');",
 	"fs.writeFileSync(process.env.FAKE_CODEX_MARK, ['called', ...args].join(' '));",
+	// 返事のファイルを置くディレクトリ（ラッパーの一時ディレクトリ）の権限を、印の隣に書く（Mac・Linux で持ち主だけかを見るため）
+	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(process.env.FAKE_CODEX_MARK + '.dirmode', (fs.statSync(require('path').dirname(args[i + 1])).mode & 0o777).toString(8));",
 	'process.exit(0);',
 	'',
 ].join('\n'));
@@ -802,6 +804,20 @@ if (isWindows) {
 } else {
 	console.log('skip codex のシムの隣に codex.js が無いときの確かめ（Windows だけ）');
 	console.log('skip 中継（invoke-codex.ps1）の確かめ 3 つ（Windows だけ）');
+
+	// Mac・Linux：ラッパーの一時ディレクトリは持ち主だけが読み書きできる（Linux の /tmp は共有のため）
+	{
+		const name = '一時ディレクトリ: Mac・Linux では持ち主だけ（700）で作る';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runWrapper(ctx, '', 'consult');
+			const mode = fs.existsSync(`${ctx.mark}.dirmode`) ? fs.readFileSync(`${ctx.mark}.dirmode`, 'utf8') : '';
+			report(name, r.code === 0 && mode === '700', `(code=${r.code} mode=${mode})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
 }
 
 finish();

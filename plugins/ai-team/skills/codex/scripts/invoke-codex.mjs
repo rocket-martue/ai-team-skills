@@ -14,7 +14,6 @@
 // 終了コード: 0 = 成功 / 1 = 呼ぶ前の確認で止めた / 2 = image で画像のパスが取れなかった / それ以外 = codex の終了コード
 
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -36,9 +35,18 @@ function stopWrapper(message, code = 1) {
 	throw new Stop(message, code);
 }
 
-// パスの比べ方（Windows は大文字小文字を区別しない）
+// パスの比べ方（Windows と Mac（既定の APFS）は大文字小文字を区別しない）
+const caseInsensitive = isWindows || process.platform === 'darwin';
 function samePath(a, b) {
-	return isWindows ? a.toLowerCase() === b.toLowerCase() : a === b;
+	return caseInsensitive ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+// 一時ディレクトリを、持ち主だけが読み書きできる形で作る（Linux の /tmp は共有なので、
+// codex の進み具合（読んだコードや差分が入る）をほかのユーザーに読ませないため）
+function makePrivateTempDir(prefix) {
+	const parent = path.join(os.tmpdir(), 'claude');
+	fs.mkdirSync(parent, { recursive: true });
+	return fs.mkdtempSync(path.join(parent, prefix));
 }
 
 // ---- 引数 ----
@@ -142,7 +150,7 @@ function readUtf8(p) {
 // 失敗したときだけ末尾 20 行を出す
 function invokeCodex(codex, args, { stdin = null, cwd, workDir }) {
 	const logFile = path.join(workDir, 'codex-output.log');
-	const fd = fs.openSync(logFile, 'w');
+	const fd = fs.openSync(logFile, 'w', 0o600);
 	let r;
 	try {
 		r = spawnSync(codex.command, [...codex.prefix, ...args], {
@@ -230,8 +238,7 @@ function main(cleanups) {
 	const mainRoot = getMainRoot(repoRoot);
 	if (!samePath(mainRoot, repoRoot)) checkRoots.push(mainRoot);
 
-	const checkDir = path.join(os.tmpdir(), 'claude', `codex-check-${randomUUID().replace(/-/g, '')}`);
-	fs.mkdirSync(checkDir, { recursive: true });
+	const checkDir = makePrivateTempDir('codex-check-');
 	let checkCode = 1;
 	let checkOut = '';
 	try {
@@ -270,8 +277,7 @@ function main(cleanups) {
 	}
 
 	// 一時ディレクトリ（終わったら消す）
-	const workDir = path.join(os.tmpdir(), 'claude', `codex-${randomUUID().replace(/-/g, '')}`);
-	fs.mkdirSync(workDir, { recursive: true });
+	const workDir = makePrivateTempDir('codex-');
 	cleanups.push(() => fs.rmSync(workDir, { recursive: true, force: true }));
 	const lastMessage = path.join(workDir, 'last-message.md');
 
@@ -349,7 +355,7 @@ function main(cleanups) {
 			why = `IMAGE_PATH の画像が見つかりません: ${declared}`;
 			if (isFile(declared)) {
 				const resolved = path.resolve(declared);
-				const under = isWindows ? resolved.toLowerCase().startsWith(generatedRoot.toLowerCase()) : resolved.startsWith(generatedRoot);
+				const under = caseInsensitive ? resolved.toLowerCase().startsWith(generatedRoot.toLowerCase()) : resolved.startsWith(generatedRoot);
 				if (!under) {
 					why = `IMAGE_PATH が生成画像の保存先（${generatedRoot}）の下にありません: ${resolved}`;
 				} else if (refOriginals.some((o) => samePath(o, resolved))) {

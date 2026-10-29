@@ -188,7 +188,9 @@ function parseConfig(buffer) {
 			}
 
 			try {
-				regexps.push(globToRegExp(item));
+				// 照らすパスと同じく forMatch でそろえる（Windows・Mac で `Secrets/**` のような大文字を含むグロブが、
+				// 小文字にそろえたパスに当たらず守りが外れないように。#100）
+				regexps.push(globToRegExp(forMatch(item)));
 			} catch (e) {
 				throw new Error(`${key} のグロブが壊れています（${e.message}）`);
 			}

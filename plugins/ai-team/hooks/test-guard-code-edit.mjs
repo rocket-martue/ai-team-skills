@@ -319,6 +319,17 @@ try {
 		check('readConfig: lstat が ENOTDIR なら無い扱い', readConfig(cand, failWith('ENOTDIR')).status === 'none');
 	}
 
+	// 大文字を含む secretPatterns（Secrets/**）も、今の OS のそろえ方で当たる（#100。Windows・Mac でパスだけ小文字にして外れないように）
+	{
+		const { readConfig, isSecretPath } = await import('./ai-team-config.mjs');
+		const proj = mkdtempSync(path.join(tmpdir(), 'guard-upper-'));
+		mkdirSync(path.join(proj, '.claude'), { recursive: true });
+		writeFileSync(path.join(proj, '.claude', 'ai-team.json'), JSON.stringify({ secretPatterns: ['Secrets/**'] }));
+		const config = readConfig([path.join(proj, '.claude', 'ai-team.json')]);
+		check('大文字を含む secretPatterns（Secrets/**）が Secrets/token.json に当たる', config.status === 'ok' && isSecretPath('Secrets/token.json', config.secretRegexps));
+		rmSync(proj, { recursive: true, force: true });
+	}
+
 	// forMatch：Windows と Mac は大文字小文字をそろえ、Linux はそろえない（#100。Mac の既定の APFS は区別しないため）
 	{
 		const { forMatch } = await import('./ai-team-config.mjs');
