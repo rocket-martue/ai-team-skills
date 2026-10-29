@@ -20,7 +20,14 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 	exit 1
 }
 
+# Windows PowerShell 5.1 は、空白を含む値を "…" で囲んで外のコマンドに渡すが、末尾の \ を重ねない。
+# そのままだと "C:\x y\" の \" が引用符として読まれ、後ろの引数が1つに溶ける。空白を含む値の末尾の \ を重ねて渡す
+$passArgs = @(foreach ($a in $args) {
+	$s = [string]$a
+	if ($s -match '\s' -and $s -match '\\+$') { $s + $Matches[0] } else { $s }
+})
+
 # node が標準エラーに書いても止めない（Stop のままだと、そこで打ち切られて終了コードが 1 になる）
 $ErrorActionPreference = 'Continue'
-& node (Join-Path $PSScriptRoot 'invoke-codex.mjs') @args
+& node (Join-Path $PSScriptRoot 'invoke-codex.mjs') @passArgs
 exit $LASTEXITCODE

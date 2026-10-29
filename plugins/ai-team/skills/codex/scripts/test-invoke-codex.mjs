@@ -772,6 +772,23 @@ if (isWindows) {
 		}
 	}
 	{
+		const name = '中継: 空白を含み末尾が \\ の値（-WorkingDirectory "…\\"）でも、後ろの引数が崩れずに届く';
+		try {
+			const ctx = makeRepo('repo with space');
+			commitAll(ctx.git, 'init');
+			const args = ['-WorkingDirectory', `${ctx.repo}\\`, '-Mode', 'consult', '-PromptFile', promptFile];
+			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: ctx.env });
+			const directArgs = fs.existsSync(ctx.mark) ? fs.readFileSync(ctx.mark, 'utf8') : '';
+			fs.rmSync(ctx.mark, { force: true });
+			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: ctx.env });
+			const ps1Args = fs.existsSync(ctx.mark) ? fs.readFileSync(ctx.mark, 'utf8') : '';
+			const ok = direct.status === 0 && viaPs1.status === 0 && directArgs !== '' && normalize(directArgs) === normalize(ps1Args);
+			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stderr=${(viaPs1.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+	{
 		const name = '中継: .ps1 から呼んでも、秘密情報で止まる終了コード 1 と止めた文がそのまま返る（review）';
 		try {
 			const ctx = makeRepo();
