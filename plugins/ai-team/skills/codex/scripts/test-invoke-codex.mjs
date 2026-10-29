@@ -31,7 +31,7 @@ fs.writeFileSync(emptyExcludes, '');
 const tempDir = path.join(root, 'tmp');
 fs.mkdirSync(tempDir);
 
-// ---- 偽物の codex（呼ばれたら、-o の次の値のファイルに返事（fake reply）を書いて、印のファイルを書き、終了コード 0 で終わる） ----
+// ---- 偽物の codex（呼ばれたら、-o の次の値のファイルに返事（fake reply）を書いて、印のファイル（受け取った引数）を書き、終了コード 0 で終わる） ----
 fs.writeFileSync(path.join(fakeDir, 'codex.cmd'), [
 	'@echo off',
 	'set "OUT="',
@@ -42,7 +42,7 @@ fs.writeFileSync(path.join(fakeDir, 'codex.cmd'), [
 	'goto loop',
 	':done',
 	'if defined OUT > "%OUT%" echo fake reply',
-	'echo called> "%FAKE_CODEX_MARK%"',
+	'echo called %*> "%FAKE_CODEX_MARK%"',
 	'exit /b 0',
 	'',
 ].join('\r\n'));
@@ -51,7 +51,7 @@ fs.writeFileSync(path.join(fakeDir, 'codex.ps1'), [
 	'for ($i = 0; $i -lt $args.Count; $i++) { if ($args[$i] -eq \'-o\' -and ($i + 1) -lt $args.Count) { $out = $args[$i + 1] } }',
 	'$utf8 = New-Object System.Text.UTF8Encoding($false)',
 	'if ($out -ne \'\') { [System.IO.File]::WriteAllText($out, \'fake reply\', $utf8) }',
-	'[System.IO.File]::WriteAllText($env:FAKE_CODEX_MARK, \'called\', $utf8)',
+	'[System.IO.File]::WriteAllText($env:FAKE_CODEX_MARK, ((@(\'called\') + $args) -join \' \'), $utf8)',
 	'exit 0',
 	'',
 ].join('\r\n'));
@@ -551,8 +551,49 @@ for (const mode of ['review', 'consult']) {
 			&& !/^SAVED:/m.test(r.stdout)
 			&& gitStatus(ctx) === before
 			&& !fs.existsSync(path.join(ctx.repo, 'docs'))
-			&& listTemp() === tempBefore;
+			&& listTemp() === tempBefore
+			// consult は Git のリポジトリでも read-only のまま（#97 で引数を足したときに崩れていないか）
+			&& (mode !== 'consult' || / -s read-only /.test(fs.readFileSync(ctx.mark, 'utf8')));
 		report(name, ok, `(code=${r.code} stdout=${r.stdout.trim().slice(0, 200)} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+
+// consult：Git のリポジトリでないフォルダでも呼べる（#97）。本物の codex は --skip-git-repo-check が無いと止まるので、渡ったかを印で見る
+function runNoGitConsult(name, config) {
+	const dir = path.join(root, `nogit-consult-${name}`);
+	fs.mkdirSync(dir, { recursive: true });
+	if (config !== undefined) {
+		fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+		fs.writeFileSync(path.join(dir, '.claude', 'ai-team.json'), config);
+	}
+	const mark = path.join(root, `mark-nogit-consult-${name}.txt`);
+	const env = buildEnv(mark);
+	// %TEMP% が Git の作業ツリーの下にある PC でも、テストの外のリポジトリを拾わない
+	env.GIT_CEILING_DIRECTORIES = root;
+	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', dir], { cwd: dir, env, encoding: 'utf8' });
+	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', called: fs.existsSync(mark), args: fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', dir };
+}
+{
+	const name = '返事: Git のリポジトリでないフォルダでも consult が通り、--skip-git-repo-check を渡す';
+	try {
+		const r = runNoGitConsult('pass', j({ secretPatterns: [] }));
+		const ok = r.code === 0
+			&& r.called
+			&& r.args.includes('--skip-git-repo-check')
+			&& /^fake reply\s*$/m.test(r.stdout)
+			&& !fs.existsSync(path.join(r.dir, 'docs'));
+		report(name, ok, `(code=${r.code} args=${r.args.trim().slice(0, 200)} stderr=${r.stderr.trim().slice(0, 200)})`);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+{
+	const name = '止まる: Git のリポジトリでないフォルダでも、設定が壊れていれば consult は止まる';
+	try {
+		const r = runNoGitConsult('broken', '{ not json');
+		report(name, !r.called && r.code !== 0 && r.stderr.includes(brokenWord), `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`);
 	} catch (e) {
 		report(name, false, String(e.message));
 	}

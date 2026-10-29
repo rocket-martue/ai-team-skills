@@ -228,7 +228,8 @@ $RefOriginals = @()
 try {
 	switch ($Mode) {
 		'consult' {
-			$codexArgs = @('exec', '--ephemeral', '--color', 'never', '-s', 'read-only', '-C', $RepoRoot, '-o', $LastMessage)
+			# --skip-git-repo-check: Git のリポジトリでないフォルダ（サーバーのフォルダを持ってきた案件など）でも相談できるようにする（#97）
+			$codexArgs = @('exec', '--ephemeral', '--color', 'never', '--skip-git-repo-check', '-s', 'read-only', '-C', $RepoRoot, '-o', $LastMessage)
 			$exitCode = Invoke-Codex -Arguments $codexArgs -Stdin $Prompt
 		}
 
