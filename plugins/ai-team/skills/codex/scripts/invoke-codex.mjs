@@ -228,7 +228,8 @@ function runConfigCheck(configModule, checkRoots, paths) {
 		for (const root of checkRoots) nodeArgs.push('--root', root);
 		nodeArgs.push('--paths-file', checkPathsFile, '--out', checkOutFile);
 		const r = spawnSync(process.execPath, nodeArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
-		return { code: r.status === null ? 1 : r.status, out: isFile(checkOutFile) ? readUtf8(checkOutFile) : '' };
+		// 頭の U+FEFF は外さずに読む（1行目は当たったパスのことがあり、パスが U+FEFF で始まると照合が外れるため）
+		return { code: r.status === null ? 1 : r.status, out: isFile(checkOutFile) ? fs.readFileSync(checkOutFile, 'utf8') : '' };
 	} finally {
 		fs.rmSync(checkDir, { recursive: true, force: true });
 	}
@@ -398,10 +399,12 @@ function makeSnapshot(top, compare, workDir, configModule, checkRoots) {
 	if (tracked.code !== 0 || others.code !== 0 || staged.code !== 0) stopWrapper(`git ls-files が失敗しました: ${top}`);
 	const untracked = others.stdout.split('\0').filter((p) => p !== '');
 	const candidates = [...new Set([...tracked.stdout.split('\0'), ...untracked].filter((p) => p !== ''))].filter((rel) => {
-		// 消したファイルは写さない（壊れたシンボリックリンクはディスクにあるので残し、下でリンクとして止める）
+		// 消したファイルは写さない（壊れたシンボリックリンクはディスクにあるので残し、下でリンクとして止める）。
+		// 追跡しているファイルがふつうのフォルダに置き換わっていれば、その名前は写さない（中身は未追跡として別に出る）。
+		// / で終わる項目（未追跡の入れ子のリポジトリ）は、下で止めるために残す
 		try {
-			fs.lstatSync(path.join(top, rel));
-			return true;
+			const st = fs.lstatSync(path.join(top, rel));
+			return !(st.isDirectory() && !rel.endsWith('/'));
 		} catch {
 			return false;
 		}
@@ -467,7 +470,7 @@ function buildContainerPrompt(container, untracked) {
 		'次の変更をレビューしてください。',
 		'',
 		'- 見る差分：/review/review.diff',
-		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください）',
+		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください。テストが無いファイルを読もうとして落ちたときは、変更の不具合ではないので、指摘にせず、そう書き添えてください）',
 		`- テスト：作業ツリーで \`${container.test}\` を打ち、その結果も根拠にしてください（準備のコマンド \`${container.setup}\` は打ってあります）`,
 		'- 作業ツリーのファイルを書き換えないでください（テストが作るキャッシュや一時ファイルは除く）',
 		'- 指摘は、/work/repo からの相対パスのファイル:行と、重要度（必須／推奨／表記）を付けて書いてください',
@@ -525,12 +528,20 @@ function reviewInContainer({ docker, image, workDir, container, agents, state })
 // 15. 後始末：コンテナ → 作業用のボリューム → 一時ディレクトリの順。失敗しても続け、残ったものと消し方を出す（D11）
 function cleanupContainer(docker, state, workDir) {
 	const left = [];
+	// docker が途中で見つからなくなっても（止める例外を投げる）、残りの後始末を続ける
+	const tryRun = (args) => {
+		try {
+			return docker.run(args).code;
+		} catch {
+			return 1;
+		}
+	};
 	for (const id of state.containers) {
 		// 消せなくても、もう無ければ（--rm の準備のコンテナ）知らせない
-		if (docker.run(['rm', '-f', id]).code !== 0 && docker.run(['container', 'inspect', id]).code === 0) left.push(`コンテナ ${id}（docker rm -f ${id}）`);
+		if (tryRun(['rm', '-f', id]) !== 0 && tryRun(['container', 'inspect', id]) === 0) left.push(`コンテナ ${id}（docker rm -f ${id}）`);
 	}
 	for (const v of state.volumes) {
-		if (docker.run(['volume', 'rm', v]).code !== 0) left.push(`ボリューム ${v}（docker volume rm ${v}）`);
+		if (tryRun(['volume', 'rm', v]) !== 0) left.push(`ボリューム ${v}（docker volume rm ${v}）`);
 	}
 	try {
 		fs.rmSync(workDir, { recursive: true, force: true });

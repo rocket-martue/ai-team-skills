@@ -940,7 +940,8 @@ containerCase('通る：準備と健さんのコンテナの形・写したも�
 });
 
 for (const [name, setup, word, extraEnv] of [
-	['差分に秘密情報（追跡している wp-config.php を書き換えた）', (c) => { c.write('wp-config.php', '<?php // a\n'); commitAll(c.git, 'wp'); c.write('wp-config.php', '<?php // b\n'); }, '秘密情報'],
+	// 書き換えた秘密情報は、1 の確かめ（今の review と同じ）で止まる。D13 の差分の判定は、その後ろの二重の守り
+	['変更に秘密情報（追跡している wp-config.php を書き換えた。1 の確かめで止まる）',(c) => { c.write('wp-config.php', '<?php // a\n'); commitAll(c.git, 'wp'); c.write('wp-config.php', '<?php // b\n'); }, '秘密情報'],
 	['サブモジュール（gitlink）', (c) => { c.git('update-index', '--add', '--cacheinfo', `160000,${c.git('rev-parse', 'HEAD').trim()},sub`); }, 'サブモジュール'],
 	['未追跡の入れ子のリポジトリ', (c) => { c.write('nested/a.txt', 'a\n'); gitIn(path.join(c.repo, 'nested'), c.env, 'init', '-q'); }, '入れ子'],
 	['container の設定が無い', (c) => { c.write('.claude/ai-team.json', j({ secretPatterns: [] })); commitAll(c.git, 'no container'); }, 'container'],
@@ -988,6 +989,27 @@ containerCase('通る：変更していない秘密情報（wp-config.php・.env
 		&& !copied.some((p) => p.endsWith('/wp-config.php') || p.endsWith('/.env.example') || p.includes('/private/'))
 		&& !/wp-config|\.env\.example|private\//.test(promptText);
 	return [ok, `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+containerCase('通る：名前が U+FEFF で始まる秘密情報も、写さない（共有モジュールの出力の1行目でも照合が外れない）', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('.claude/ai-team.json', j({ secretPatterns: ['**/token.json'], container: { setup: 'npm ci', test: 'npm test' } }));
+	ctx.write('﻿k/token.json', '{}\n');
+	commitAll(ctx.git, 'bom');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	return [r.code === 0 && copied.includes('c1__work_repo/package.json') && !copied.some((p) => p.endsWith('/token.json')), `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+containerCase('通る：追跡しているファイルがフォルダに置き換わっていても（foo を消して foo/index.js を作った）、止まらずに中身を写す', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('foo', 'file\n');
+	commitAll(ctx.git, 'foo');
+	fs.rmSync(path.join(ctx.repo, 'foo'));
+	ctx.write('foo/index.js', 'dir\n');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	return [r.code === 0 && copied.includes('c1__work_repo/foo/index.js'), `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
 });
 
 containerCase('通る：DOCKER_HOST がこの PC（unix:// か npipe://）なら止まらず、--context を付けない', () => {
