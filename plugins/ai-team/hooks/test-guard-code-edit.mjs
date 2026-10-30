@@ -319,6 +319,29 @@ try {
 		check('readConfig: lstat が ENOTDIR なら無い扱い', readConfig(cand, failWith('ENOTDIR')).status === 'none');
 	}
 
+	// 大文字を含む secretPatterns（Secrets/**）も、今の OS のそろえ方で当たる（#100。Windows・Mac でパスだけ小文字にして外れないように）
+	{
+		const { readConfig, isSecretPath } = await import('./ai-team-config.mjs');
+		const proj = mkdtempSync(path.join(tmpdir(), 'guard-upper-'));
+		mkdirSync(path.join(proj, '.claude'), { recursive: true });
+		writeFileSync(path.join(proj, '.claude', 'ai-team.json'), JSON.stringify({ secretPatterns: ['Secrets/**'] }));
+		const config = readConfig([path.join(proj, '.claude', 'ai-team.json')]);
+		check('大文字を含む secretPatterns（Secrets/**）が Secrets/token.json に当たる', config.status === 'ok' && isSecretPath('Secrets/token.json', config.secretRegexps));
+		rmSync(proj, { recursive: true, force: true });
+	}
+
+	// forMatch：Windows と Mac は大文字小文字をそろえ、Linux はそろえない（#100。Mac の既定の APFS は区別しないため）
+	{
+		const { forMatch } = await import('./ai-team-config.mjs');
+		check('forMatch: darwin（Mac）では .ENV を .env にそろえる', forMatch('.ENV', 'darwin') === '.env');
+		check('forMatch: win32 では WP-CONFIG.PHP を wp-config.php にそろえる', forMatch('WP-CONFIG.PHP', 'win32') === 'wp-config.php');
+		check('forMatch: linux ではそろえない（大文字小文字を区別するファイルシステム）', forMatch('.ENV', 'linux') === '.ENV');
+		// 場所の判定（中か外か）は Windows だけそろえる。Mac には大文字小文字を区別する APFS もあり、Repo と repo を同じ場所と見ないため
+		const { forPath } = await import('./ai-team-config.mjs');
+		check('forPath: darwin（Mac）では場所の判定をそろえない（/x/Repo と /x/repo は別の場所）', forPath('/x/Repo', 'darwin') === '/x/Repo');
+		check('forPath: win32 では場所の判定をそろえる', forPath('C:/X/Repo', 'win32') === 'c:/x/repo');
+	}
+
 	// ---- settings.json ----
 	const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
 	const allow = settings.permissions?.allow || [];
@@ -332,6 +355,13 @@ try {
 		}
 	}
 	for (const rule of ['Bash(git remote get-url:*)', 'PowerShell(git remote get-url:*)']) {
+		check(`settings.json の allow に ${rule} がある`, allow.includes(rule));
+	}
+	// 健さんのラッパー：Node 版（#100）と、前の呼び方の中継（.ps1）の両方
+	for (const rule of [
+		'Bash(node "*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.mjs" *)',
+		'Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.ps1" *)',
+	]) {
 		check(`settings.json の allow に ${rule} がある`, allow.includes(rule));
 	}
 	for (const rule of ['Read(**/.dev.vars)', 'Read(**/.kv/**)', 'Read(**/wp-config.php)', 'Read(**/.env*)', 'Bash(gh pr merge:*)']) {

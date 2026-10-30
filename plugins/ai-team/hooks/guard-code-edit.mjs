@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import { forMatch, isSecretPath, readConfig, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
+import { forMatch, forPath, isSecretPath, readConfig, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
 
 // git worktree の置き場所（リポジトリの中）。この頭を剥がした相対パスでも、秘密情報の判定をする。
 const WORKTREE_PREFIX = /^\.claude\/worktrees\/[^/]+\/(.+)$/;
@@ -34,8 +34,9 @@ function block(reason) {
 	process.exit(2);
 }
 
+// 場所の判定（中か外か）に使う形。大文字小文字のそろえ方は forPath（Windows だけ）。秘密情報の照らしには forMatch を重ねる（#100）
 function normalize(p) {
-	return forMatch(path.resolve(p).split(path.sep).join('/'));
+	return forPath(path.resolve(p).split(path.sep).join('/'));
 }
 
 function isInside(target, dir) {
@@ -49,13 +50,13 @@ function judge(absolute, projectDir, outsideWritable, label, secretRegexps) {
 	const secretReason = `guard-code-edit: ${label} は秘密情報のファイルなので編集できません。`;
 
 	if (!isInside(absolute, projectDir)) {
-		if (SECRET_PATTERNS.some((re) => re.test(normalize(absolute)))) {
+		if (SECRET_PATTERNS.some((re) => re.test(forMatch(normalize(absolute))))) {
 			return secretReason;
 		}
 
 		const allowed = outsideWritable.some(
 			({ base, pattern }) =>
-				isInside(absolute, base) && pattern.test(forMatch(path.relative(base, absolute).split(path.sep).join('/')))
+				isInside(absolute, base) && pattern.test(forPath(path.relative(base, absolute).split(path.sep).join('/')))
 		);
 
 		return allowed ? null : `guard-code-edit: リポジトリの外（${label}）は編集できません。`;

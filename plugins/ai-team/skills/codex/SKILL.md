@@ -5,7 +5,7 @@ argument-hint: "[consult|review|image] <依頼>"
 allowed-tools:
   - Read
   - Write
-  - Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" *)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.mjs" *)
 ---
 
 # codex（健さんに頼む）
@@ -25,15 +25,15 @@ allowed-tools:
 
 1. 依頼を、健さんが1回で答えられる1つの頼みにする。会話の経緯をそのまま渡さない。自分の結論や見立ては渡さない（先入観を移さないため）
 2. 頼みの文をセッションの scratchpad（`<一時ディレクトリ>/claude/` の下）の一時ファイルに書く。`review` は頼みの文を使わない
-3. リポジトリの根から、Bash ツールで次の形で呼ぶ（settings.json の allow に入っているのはこの形だけ）。1回に数分かかるので、`run_in_background` で回し、終わりの知らせを受けてから読む
+3. リポジトリの根から、Bash ツールで次の形で呼ぶ（Windows・Mac・Linux で同じ。settings.json の allow に入っているのはこの形と、前の呼び方（下の「前の呼び方」）だけ）。1回に数分かかるので、`run_in_background` で回し、終わりの知らせを受けてから読む
 
    ```
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" -Mode <consult|review|image> [-PromptFile <一時ファイル>] [-Image "<画像1>|<画像2>"] [-Base <基準ブランチ>] [-WorkingDirectory <パス>]
+   node "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.mjs" -Mode <consult|review|image> [-PromptFile <一時ファイル>] [-Image "<画像1>|<画像2>"] [-Base <基準ブランチ>] [-WorkingDirectory <パス>]
    ```
 
    - worktree で作業しているときは `-WorkingDirectory <worktree のパス>` を付ける（健さんはそこを作業の根にして読む）
    - `review`：コミット前は何も付けない（未コミットの変更を見る）。コミット済みを見るときは `git fetch origin` のあと `-Base origin/<既定ブランチ>`。今のブランチ（HEAD）を見るので、呼ぶ前に `git status --short --branch` で見たいブランチにいるか確かめる
-   - `image`：参照画像は `|` 区切りの1つの文字列で渡す。できた画像のパスは、返事の後ろの `IMAGE: <絶対パス>` の行に出る。ラッパーが終了コード 2 で止まったら、画像は取れていないので、コピーしない
+   - `image`：参照画像は `|` 区切りの1つの文字列で渡す（Mac・Linux でも、名前に `|` を含む画像は渡せない）。できた画像のパスは、返事の後ろの `IMAGE: <絶対パス>` の行に出る。ラッパーが終了コード 2 で止まったら、画像は取れていないので、コピーしない
 4. 一時ファイルを消す
 5. 返事は標準出力に出るだけで、どこにも保存されない。まーちゅうに伝えるときや PR に貼るときは、その場で写す（貼る前に、秘密情報・クライアントの識別情報・ローカルの絶対パスが無いことを確かめる）
 6. **答えはそのまま採らない。** コード・一次データと照らして確かめてから採る。返すときは「健さんの答え（使えるところ）」と「判断（同意・不同意・残るリスク）」を分ける
@@ -55,7 +55,11 @@ allowed-tools:
 - 秘密情報の照らし合わせは、ガードと同じ共有モジュール（プラグインの `hooks/ai-team-config.mjs`）で行う。作業の根とメインのチェックアウトの根の `.claude/ai-team.json`（無ければ `repo-files/claude/ai-team.json`）の `secretPatterns` も足す。設定ファイルが壊れていれば、どのモードでも呼ばずに止まる
 - `review`：健さんに渡る変更のすべてのパス（`git status --porcelain -z -uall` の全項目と、`-Base` のときは `git diff --name-only --no-renames <基準>...HEAD`）を照らし、1つでも秘密情報に当たれば呼ばずに止まる。どちらも `--ignore-submodules=none` を付けて、サブモジュールの `ignore` の設定があっても、サブモジュールの変更を拾う（照らすのはサブモジュールの置き場所のパスまで。中のファイルは照らさない）
 - `image`：参照画像を空の一時ディレクトリにコピーしてそこで呼ぶ（リポジトリには触れない）。`IMAGE_PATH:` の画像が `<CODEX_HOME>/generated_images/` の下にあり、参照画像と別のファイルのときだけ `IMAGE:` を出す
-- `codex`・`node` が PATH に無ければ、入れ方を出して止まる（`check` は `codex` が無くても動く）
+- `codex` が PATH に無ければ、入れ方を出して止まる（`check` は `codex` が無くても動く）。Windows で npm のシム（`codex.cmd`）なら、隣の `node_modules/@openai/codex/bin/codex.js` を node で直接起動する（シェルを通さない）。隣に無い（pnpm・bun などで入れた）シムは飛ばして PATH の後ろも探し、最後まで使えるものが無いときだけ、直し方を出して止まる
+
+## 前の呼び方
+
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" ...`（Windows だけ）も、受け取った引数をそのまま `invoke-codex.mjs` に渡す中継として残してある。導入済みのリポジトリの settings.json の allow と、gh-skills の呼び方がこの形のため。新しく書く呼び方は `node ... invoke-codex.mjs` にする
 
 ## 注意
 

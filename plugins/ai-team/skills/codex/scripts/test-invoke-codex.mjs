@@ -1,5 +1,5 @@
 // test-invoke-codex.mjs
-// invoke-codex.ps1 の review の前の秘密情報の確かめを、偽物の codex だけで確かめる。
+// invoke-codex.mjs の review の前の秘密情報の確かめを、偽物の codex だけで確かめる。Windows・Mac・Linux で動く（#100）。
 // 本物の健さん（codex）は呼ばない。依存なし（Node.js の標準モジュールだけ）。
 //
 // 使い方（リポジトリの根から）:
@@ -14,12 +14,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const wrapper = path.join(here, 'invoke-codex.ps1');
-
-if (process.platform !== 'win32') {
-	console.error('このテストは Windows PowerShell 5.1 用です（win32 以外では実行しません）。');
-	process.exit(1);
-}
+const wrapper = path.join(here, 'invoke-codex.mjs');
+// 前の呼び方を残すための中継（Windows だけで確かめる）
+const wrapperPs1 = path.join(here, 'invoke-codex.ps1');
+const isWindows = process.platform === 'win32';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'test-invoke-codex-'));
 const fakeDir = path.join(root, 'fake-bin');
@@ -31,38 +29,44 @@ fs.writeFileSync(emptyExcludes, '');
 const tempDir = path.join(root, 'tmp');
 fs.mkdirSync(tempDir);
 
-// ---- 偽物の codex（呼ばれたら、-o の次の値のファイルに返事（fake reply）を書いて、印のファイル（受け取った引数）を書き、終了コード 0 で終わる） ----
-fs.writeFileSync(path.join(fakeDir, 'codex.cmd'), [
-	'@echo off',
-	'set "OUT="',
-	':loop',
-	'if "%~1"=="" goto done',
-	'if "%~1"=="-o" set "OUT=%~2"',
-	'shift',
-	'goto loop',
-	':done',
-	'if defined OUT > "%OUT%" echo fake reply',
-	'echo called %*> "%FAKE_CODEX_MARK%"',
-	'exit /b 0',
+// ---- 偽物の codex（呼ばれたら、-o の次の値のファイルに返事を書いて、印のファイル（受け取った引数）を書き、終了コード 0 で終わる） ----
+// 返事は FAKE_CODEX_REPLY（無ければ fake reply）。本体は JS で、npm で入れたときと同じ置き場所に置く
+// （Windows のラッパーは、シム（codex.cmd）の隣の node_modules/@openai/codex/bin/codex.js を node で起動するため）
+const fakeJs = path.join(fakeDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+fs.mkdirSync(path.dirname(fakeJs), { recursive: true });
+fs.writeFileSync(fakeJs, [
+	"const fs = require('fs');",
+	'const args = process.argv.slice(2);',
+	"const i = args.indexOf('-o');",
+	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(args[i + 1], process.env.FAKE_CODEX_REPLY || 'fake reply');",
+	"fs.writeFileSync(process.env.FAKE_CODEX_MARK, ['called', ...args].join(' '));",
+	// 引数を配列のままでも残す（空白を含むパスでも、要素ごとに比べられるように）
+	"fs.writeFileSync(process.env.FAKE_CODEX_MARK + '.json', JSON.stringify(args));",
+	// 返事のファイルを置くディレクトリ（ラッパーの一時ディレクトリ）の権限を、印の隣に書く（Mac・Linux で持ち主だけかを見るため）
+	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(process.env.FAKE_CODEX_MARK + '.dirmode', (fs.statSync(require('path').dirname(args[i + 1])).mode & 0o777).toString(8));",
+	'process.exit(0);',
 	'',
-].join('\r\n'));
-fs.writeFileSync(path.join(fakeDir, 'codex.ps1'), [
-	'$out = \'\'',
-	'for ($i = 0; $i -lt $args.Count; $i++) { if ($args[$i] -eq \'-o\' -and ($i + 1) -lt $args.Count) { $out = $args[$i + 1] } }',
-	'$utf8 = New-Object System.Text.UTF8Encoding($false)',
-	'if ($out -ne \'\') { [System.IO.File]::WriteAllText($out, \'fake reply\', $utf8) }',
-	'[System.IO.File]::WriteAllText($env:FAKE_CODEX_MARK, ((@(\'called\') + $args) -join \' \'), $utf8)',
-	'exit 0',
-	'',
-].join('\r\n'));
+].join('\n'));
+// 本体を CommonJS として読ませる（偽物の置き場所の上の package.json に左右されないように）
+fs.writeFileSync(path.join(path.dirname(fakeJs), 'package.json'), '{"type":"commonjs"}\n');
+if (isWindows) {
+	// npm のシムの形。ラッパーはこれを起動せず、隣の codex.js を node で起動する
+	fs.writeFileSync(path.join(fakeDir, 'codex.cmd'), `@"${process.execPath}" "%~dp0\node_modules\@openai\codex\bin\codex.js" %*\r\n`);
+} else {
+	// 実行できる codex（改行は LF。CRLF だと shebang が壊れる）
+	const shim = path.join(fakeDir, 'codex');
+	fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${fakeJs}" "$@"\n`);
+	fs.chmodSync(shim, 0o755);
+}
 
 // ---- 子プロセスの環境（今の PATH・PATHEXT・GIT_ を引き継がず、作り直す） ----
 function findGitDir() {
-	// where の出力は CP932 のことがあるので使わず、PATH を自分で分けて git.exe を探す
+	// where の出力は CP932 のことがあるので使わず、PATH を自分で分けて git を探す
 	const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH');
-	for (const dir of (process.env[pathKey] || '').split(';')) {
+	const name = isWindows ? 'git.exe' : 'git';
+	for (const dir of (process.env[pathKey] || '').split(path.delimiter)) {
 		if (dir.trim() === '') continue;
-		if (fs.existsSync(path.join(dir, 'git.exe'))) return dir;
+		if (fs.existsSync(path.join(dir, name))) return dir;
 	}
 	throw new Error('git が見つかりません');
 }
@@ -86,8 +90,12 @@ function buildEnv(mark) {
 		if (/^(PATH|PATHEXT)$/i.test(k)) continue;
 		env[k] = v;
 	}
-	env.PATH = [fakeDir, gitDir, path.dirname(process.execPath), path.join(sysRoot, 'System32'), psDir].join(';');
-	env.PATHEXT = '.COM;.EXE;.BAT;.CMD;.PS1';
+	if (isWindows) {
+		env.PATH = [fakeDir, gitDir, path.dirname(process.execPath), path.join(sysRoot, 'System32'), psDir].join(';');
+		env.PATHEXT = '.COM;.EXE;.BAT;.CMD;.PS1';
+	} else {
+		env.PATH = [fakeDir, gitDir, path.dirname(process.execPath), '/usr/bin', '/bin'].join(':');
+	}
 	// 利用者の diff.renames の設定に左右されないよう、環境変数で固定する
 	env.GIT_CONFIG_COUNT = '2';
 	env.GIT_CONFIG_KEY_0 = 'diff.renames';
@@ -95,8 +103,10 @@ function buildEnv(mark) {
 	env.GIT_CONFIG_KEY_1 = 'core.excludesFile';
 	env.GIT_CONFIG_VALUE_1 = emptyExcludes;
 	env.FAKE_CODEX_MARK = mark;
+	// 一時ディレクトリの向け先は OS で違う（Windows は TEMP・TMP、Mac・Linux は TMPDIR）。全部向ける
 	env.TEMP = tempDir;
 	env.TMP = tempDir;
+	env.TMPDIR = tempDir;
 	return env;
 }
 
@@ -146,21 +156,43 @@ const promptFile = path.join(root, 'prompt-consult.md');
 fs.writeFileSync(promptFile, '相談です\n');
 
 // workDir：作業の根（省略時は ctx.repo）。worktree から呼ぶときに指す
+// ラッパー（invoke-codex.mjs）を今の node で呼ぶ
+function runNode(wrapperPath, args, opts) {
+	return spawnSync(process.execPath, [wrapperPath, ...args], { encoding: 'utf8', ...opts });
+}
+
 function runWrapper(ctx, base, mode = 'review', workDir = ctx.repo, wrapperPath = wrapper) {
-	const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath, '-Mode', mode, '-WorkingDirectory', workDir];
+	const args = ['-Mode', mode, '-WorkingDirectory', workDir];
 	if (mode === 'consult') args.push('-PromptFile', promptFile);
 	if (base) args.push('-Base', base);
-	const r = spawnSync(psExe, args, { cwd: workDir, env: ctx.env, encoding: 'utf8' });
+	const r = runNode(wrapperPath, args, { cwd: workDir, env: ctx.env });
 	return { code: r.status, stderr: r.stderr || '', stdout: r.stdout || '', called: fs.existsSync(ctx.mark) };
 }
 
-// ---- 最初の確かめ：子プロセスで codex が偽物を指すか ----
+// ---- 最初の確かめ：子プロセスの PATH で、ラッパーが選ぶ codex が偽物か ----
+// ラッパー（invoke-codex.mjs の findCodex）と同じ見方で PATH を前から探す。存在だけでなく「使えるか」まで見る
+// （ラッパーは、隣に codex.js の無いシム（Windows）や実行できない codex（Mac・Linux。noexec の一時ディレクトリなど）を飛ばして
+// 後ろを探す。node のフォルダに本物の codex があると、そこに届くため）
 {
 	const env = buildEnv(path.join(root, 'mark-probe.txt'));
-	const r = spawnSync(psExe, ['-NoProfile', '-Command', '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); (Get-Command codex).Source'], { env, encoding: 'utf8' });
-	const src = (r.stdout || '').trim();
-	if (r.status !== 0 || !src.toLowerCase().startsWith(fakeDir.toLowerCase())) {
-		console.error(`Get-Command codex が偽物を指していません（${src || r.stderr}）。ラッパーを呼ばずに落とします。`);
+	const usable = (dir) => {
+		if (isWindows) {
+			if (fs.existsSync(path.join(dir, 'codex.exe'))) return true;
+			const shim = ['codex.cmd', 'codex.ps1', 'codex'].some((n) => fs.existsSync(path.join(dir, n)));
+			return shim && fs.existsSync(path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'));
+		}
+		try {
+			fs.accessSync(path.join(dir, 'codex'), fs.constants.X_OK);
+			return fs.statSync(path.join(dir, 'codex')).isFile();
+		} catch {
+			return false;
+		}
+	};
+	// 場所の比べ方はラッパーの sameLocation と同じ（大文字小文字は Windows だけそろえる）
+	const sameDir = (a, b) => (isWindows ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+	const first = env.PATH.split(path.delimiter).find((dir) => dir.trim() !== '' && usable(dir)) || null;
+	if (first === null || !sameDir(first, fakeDir)) {
+		console.error(`ラッパーが選ぶ codex が偽物ではありません（${first}）。本物に届くかもしれないので、ラッパーを呼ばずに落とします。`);
 		fs.rmSync(root, { recursive: true, force: true });
 		process.exit(1);
 	}
@@ -481,7 +513,7 @@ function makeWrapperTree(hooksKind) {
 	const tree = path.join(root, `wrapper-tree-${hooksKind}-${caseNo}`);
 	const scripts = path.join(tree, 'skills', 'codex', 'scripts');
 	fs.mkdirSync(scripts, { recursive: true });
-	fs.copyFileSync(wrapper, path.join(scripts, 'invoke-codex.ps1'));
+	fs.copyFileSync(wrapper, path.join(scripts, 'invoke-codex.mjs'));
 	const realHooks = path.join(here, '..', '..', '..', 'hooks');
 	const hooks = path.join(tree, 'hooks');
 	if (hooksKind === 'junction') {
@@ -490,7 +522,7 @@ function makeWrapperTree(hooksKind) {
 		fs.mkdirSync(hooks, { recursive: true });
 		fs.writeFileSync(path.join(hooks, 'ai-team-config.mjs'), 'process.exit(0);\n');
 	}
-	return path.join(scripts, 'invoke-codex.ps1');
+	return path.join(scripts, 'invoke-codex.mjs');
 }
 
 // hooks/ がジャンクション経由でも、秘密情報で review が止まる（起動の判定が実体のパスにそろっている）
@@ -572,7 +604,7 @@ function runNoGitConsult(name, config) {
 	const env = buildEnv(mark);
 	// %TEMP% が Git の作業ツリーの下にある PC でも、テストの外のリポジトリを拾わない
 	env.GIT_CEILING_DIRECTORIES = root;
-	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', dir], { cwd: dir, env, encoding: 'utf8' });
+	const r = spawnSync(process.execPath, [wrapper, '-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', dir], { cwd: dir, env, encoding: 'utf8' });
 	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', called: fs.existsSync(mark), args: fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', dir };
 }
 {
@@ -609,7 +641,7 @@ try {
 	fs.writeFileSync(img, 'x');
 	const mark = path.join(root, 'mark-image.txt');
 	const env = buildEnv(mark);
-	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'image', '-PromptFile', prompt, '-WorkingDirectory', dir, '-Image', img], { cwd: dir, env, encoding: 'utf8' });
+	const r = spawnSync(process.execPath, [wrapper, '-Mode', 'image', '-PromptFile', prompt, '-WorkingDirectory', dir, '-Image', img], { cwd: dir, env, encoding: 'utf8' });
 	const ok = r.status === 2
 		&& fs.existsSync(mark)
 		&& /^fake reply\s*$/m.test(r.stdout || '')
@@ -626,7 +658,7 @@ for (const mode of ['save-code-review', 'make-patch']) {
 	try {
 		const ctx = makeRepo();
 		commitAll(ctx.git, 'init');
-		const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', mode, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+		const r = spawnSync(process.execPath, [wrapper, '-Mode', mode, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
 		report(name, r.status !== 0 && !fs.existsSync(ctx.mark), `(code=${r.status})`);
 	} catch (e) {
 		report(name, false, String(e.message));
@@ -635,7 +667,7 @@ for (const mode of ['save-code-review', 'make-patch']) {
 
 // check：確かめだけで終わり、codex を呼ばない。設定ファイルが壊れていれば止まる
 function runCheck(ctx) {
-	const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'check', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+	const r = spawnSync(process.execPath, [wrapper, '-Mode', 'check', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
 	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', called: fs.existsSync(ctx.mark) };
 }
 {
@@ -673,7 +705,7 @@ function runCheck(ctx) {
 		const ctx = makeRepo();
 		commitAll(ctx.git, 'init');
 		const tempBefore = listTemp();
-		const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapper, '-Mode', 'review', '-Task', 't', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+		const r = spawnSync(process.execPath, [wrapper, '-Mode', 'review', '-Task', 't', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
 		const ok = r.status === 0
 			&& fs.existsSync(ctx.mark)
 			&& /^fake reply\s*$/m.test(r.stdout || '')
@@ -706,5 +738,165 @@ expectPass('設定に plannerWritable が残っていても consult が通る', 
 	write('.claude/ai-team.json', j({ secretPatterns: [], plannerWritable: [] }));
 	commitAll(git, 'init');
 }, { mode: 'consult' });
+
+// ---- Windows だけ：codex の探し方と、前の呼び方（invoke-codex.ps1）の中継（#100） ----
+if (isWindows) {
+	// pnpm・bun などで入れた形：シム（codex.cmd）はあるが、隣に node_modules/@openai/codex/bin/codex.js が無い。直し方を出して止まる
+	{
+		const name = '止まる: codex のシムの隣に codex.js が無い（pnpm などで入れた形）';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const pnpmDir = path.join(root, 'pnpm-bin');
+			fs.mkdirSync(pnpmDir, { recursive: true });
+			fs.writeFileSync(path.join(pnpmDir, 'codex.cmd'), '@echo off\r\nexit /b 0\r\n');
+			// 偽物だけでなく、codex のあるフォルダは全部外す（node のフォルダに本物の codex があると、ラッパーが後ろまで探して本物を呼ぶため）
+			const hasCodex = (d) => ['codex.exe', 'codex.cmd', 'codex.ps1', 'codex'].some((n) => fs.existsSync(path.join(d, n)));
+			const env = { ...ctx.env, PATH: [pnpmDir, ...ctx.env.PATH.split(';').filter((d) => d !== fakeDir && !hasCodex(d))].join(';') };
+			const r = runNode(wrapper, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env });
+			const ok = r.status === 1 && !fs.existsSync(ctx.mark) && (r.stderr || '').includes('codex.js') && (r.stderr || '').includes('npm install -g @openai/codex');
+			report(name, ok, `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+
+	// PATH の前に codex.js の無いシム、後ろに npm で入れた codex がある：前のシムで止まらず、後ろの codex を呼ぶ
+	{
+		const name = '止まらない: codex.js の無いシムが PATH の前にあっても、後ろの npm の codex を呼ぶ';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const pnpmDir = path.join(root, 'pnpm-bin-front');
+			fs.mkdirSync(pnpmDir, { recursive: true });
+			fs.writeFileSync(path.join(pnpmDir, 'codex.cmd'), '@echo off\r\nexit /b 0\r\n');
+			const env = { ...ctx.env, PATH: [pnpmDir, ...ctx.env.PATH.split(';')].join(';') };
+			const r = runNode(wrapper, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env });
+			report(name, r.status === 0 && fs.existsSync(ctx.mark), `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+
+	// 中継：.mjs を直接呼んだときと同じ引数が偽物に届き、終了コードと日本語の返事がそのまま返る
+	const runPs1 = (args, opts) => spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPs1, ...args], { encoding: 'utf8', ...opts });
+	// 一時ディレクトリの名前（-o の値）は呼ぶたびに違うので、比べる前にそろえる（配列で比べるので、TEMP のパスに空白があってもずれない）
+	const normalize = (s) => {
+		try {
+			const a = JSON.parse(s);
+			const i = a.indexOf('-o');
+			if (i >= 0 && i + 1 < a.length) a[i + 1] = '<返事のファイル>';
+			return JSON.stringify(a);
+		} catch {
+			return '';
+		}
+	};
+	const readArgs = (mark) => (fs.existsSync(`${mark}.json`) ? fs.readFileSync(`${mark}.json`, 'utf8') : '');
+	const clearMarks = (mark) => {
+		fs.rmSync(mark, { force: true });
+		fs.rmSync(`${mark}.json`, { force: true });
+	};
+	{
+		const name = '中継: .ps1 から呼んでも .mjs と同じ引数が届き、日本語の返事が化けずに返る（consult）';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const reply = '健さんの返事：日本語のテスト';
+			const args = ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo];
+			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: { ...ctx.env, FAKE_CODEX_REPLY: reply } });
+			const directArgs = readArgs(ctx.mark);
+			clearMarks(ctx.mark);
+			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: { ...ctx.env, FAKE_CODEX_REPLY: reply } });
+			const ps1Args = readArgs(ctx.mark);
+			const ok = direct.status === 0 && viaPs1.status === 0
+				&& directArgs !== '' && normalize(directArgs) === normalize(ps1Args)
+				&& (direct.stdout || '').includes(reply) && (viaPs1.stdout || '').includes(reply);
+			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stdout=${(viaPs1.stdout || '').trim().slice(0, 80)} stderr=${(viaPs1.stderr || '').trim().slice(0, 160)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+	{
+		const name = '中継: 空白を含み末尾が \\ の値（-WorkingDirectory "…\\"）でも、後ろの引数が崩れずに届く';
+		try {
+			const ctx = makeRepo('repo with space');
+			commitAll(ctx.git, 'init');
+			const args = ['-WorkingDirectory', `${ctx.repo}\\`, '-Mode', 'consult', '-PromptFile', promptFile];
+			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: ctx.env });
+			const directArgs = readArgs(ctx.mark);
+			clearMarks(ctx.mark);
+			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: ctx.env });
+			const ps1Args = readArgs(ctx.mark);
+			const ok = direct.status === 0 && viaPs1.status === 0 && directArgs !== '' && normalize(directArgs) === normalize(ps1Args);
+			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stderr=${(viaPs1.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+	{
+		const name = '中継: 空の値（-Base ""）でも落とさずに渡し、後ろの引数がずれない（review）';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const args = ['-Base', '', '-Mode', 'review', '-WorkingDirectory', ctx.repo];
+			const direct = runNode(wrapper, args, { cwd: ctx.repo, env: ctx.env });
+			const directArgs = readArgs(ctx.mark);
+			clearMarks(ctx.mark);
+			const viaPs1 = runPs1(args, { cwd: ctx.repo, env: ctx.env });
+			const ps1Args = readArgs(ctx.mark);
+			const ok = direct.status === 0 && viaPs1.status === 0 && directArgs.includes('--uncommitted') && normalize(directArgs) === normalize(ps1Args);
+			report(name, ok, `(code=${direct.status}/${viaPs1.status} args=${normalize(ps1Args).slice(0, 160)} stderr=${(viaPs1.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+	{
+		const name = '中継: .ps1 から呼んでも、秘密情報で止まる終了コード 1 と止めた文がそのまま返る（review）';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			ctx.write('.dev.vars', 'S=1\n');
+			const r = runPs1(['-Mode', 'review', '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env });
+			const ok = r.status === 1 && !fs.existsSync(ctx.mark) && (r.stderr || '').includes('秘密情報') && (r.stderr || '').includes('.dev.vars');
+			report(name, ok, `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+	{
+		const name = '中継: .ps1 から呼んでも、image の終了コード 2 がそのまま返る';
+		try {
+			const dir = path.join(root, 'nogit-ps1-image');
+			fs.mkdirSync(dir, { recursive: true });
+			const prompt = path.join(root, 'prompt-image-ps1.md');
+			fs.writeFileSync(prompt, '画像を作って\n');
+			const img = path.join(root, 'ref-image-ps1.png');
+			fs.writeFileSync(img, 'x');
+			const mark = path.join(root, 'mark-ps1-image.txt');
+			const r = runPs1(['-Mode', 'image', '-PromptFile', prompt, '-WorkingDirectory', dir, '-Image', img], { cwd: dir, env: buildEnv(mark) });
+			const ok = r.status === 2 && fs.existsSync(mark) && (r.stderr || '').includes('IMAGE_PATH');
+			report(name, ok, `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+} else {
+	console.log('skip codex のシムの隣に codex.js が無いときの確かめ 2 つ（Windows だけ）');
+	console.log('skip 中継（invoke-codex.ps1）の確かめ 5 つ（Windows だけ）');
+
+	// Mac・Linux：ラッパーの一時ディレクトリは持ち主だけが読み書きできる（Linux の /tmp は共有のため）
+	{
+		const name = '一時ディレクトリ: Mac・Linux では持ち主だけ（700）で作る';
+		try {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runWrapper(ctx, '', 'consult');
+			const mode = fs.existsSync(`${ctx.mark}.dirmode`) ? fs.readFileSync(`${ctx.mark}.dirmode`, 'utf8') : '';
+			report(name, r.code === 0 && mode === '700', `(code=${r.code} mode=${mode})`);
+		} catch (e) {
+			report(name, false, String(e.message));
+		}
+	}
+}
 
 finish();

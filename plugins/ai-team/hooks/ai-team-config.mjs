@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ガード（guard-code-edit.mjs）と健さんのラッパー（invoke-codex.ps1）の両方が使う判定の正本。
+// ガード（guard-code-edit.mjs）と健さんのラッパー（invoke-codex.mjs）の両方が使う判定の正本。
 // - 秘密情報の既定の一覧
 // - リンク（シンボリックリンク・ジャンクション）をたどる関数
 // - グロブを正規表現に直す関数
@@ -35,10 +35,18 @@ export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '�
 // 呼び名の長さの上限（文字数）。
 const NAME_MAX_LENGTH = 40;
 
-// Windows のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
-// パターンとの照合も包含の判定も、Windows では小文字にそろえてから行う。
-export function forMatch(p) {
-	return process.platform === 'win32' ? p.toLowerCase() : p;
+// Windows と Mac（既定の APFS）のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
+// パターンとの照合も包含の判定も、Windows と Mac では小文字にそろえてから行う（#100）。
+// platform は確かめのために差し替えられるようにしてある（ふだんは今の OS）。
+export function forMatch(p, platform = process.platform) {
+	return platform === 'win32' || platform === 'darwin' ? p.toLowerCase() : p;
+}
+
+// 場所の同一性・包含（リポジトリの中か外か）の判定に使うそろえ方。Windows だけ小文字にそろえる。
+// Mac には大文字小文字を区別する APFS のボリュームもあり、そこで Repo と repo を同じ場所と見ると、
+// リポジトリの外の編集を中と取り違えるので、場所の判定ではそろえない（秘密情報の照らしは forMatch で厳しいほうに倒す。#100）
+export function forPath(p, platform = process.platform) {
+	return platform === 'win32' ? p.toLowerCase() : p;
 }
 
 // そのパス自体がリンク（Windows のジャンクションを含む）か。リンク先の有無は問わない。
@@ -187,7 +195,9 @@ function parseConfig(buffer) {
 			}
 
 			try {
-				regexps.push(globToRegExp(item));
+				// 照らすパスと同じく forMatch でそろえる（Windows・Mac で `Secrets/**` のような大文字を含むグロブが、
+				// 小文字にそろえたパスに当たらず守りが外れないように。#100）
+				regexps.push(globToRegExp(forMatch(item)));
 			} catch (e) {
 				throw new Error(`${key} のグロブが壊れています（${e.message}）`);
 			}
@@ -408,6 +418,6 @@ const self = fileURLToPath(import.meta.url);
 const entry = process.argv[1] ? realPath(process.argv[1]) : null;
 const selfReal = realPath(self);
 
-if (entry !== null && selfReal !== null && forMatch(entry) === forMatch(selfReal)) {
+if (entry !== null && selfReal !== null && forPath(entry) === forPath(selfReal)) {
 	process.exit(cli(process.argv.slice(2)));
 }

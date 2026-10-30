@@ -18,7 +18,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 - フックに Node.js が要る（node が PATH に無いと、フックは何も言わずに外れる）
 - マーケットプレイスの登録に git が要る（GitHub から clone するため）
 - 入れるフォルダは git のリポジトリでなくてもよい（ガードとフックは、開いたフォルダを根として見る）。ただし、差分を使うもの（健さんのレビュー・藤さんに比べるブランチで見てもらう・純ちゃん・コミットと PR）は使えない。健さんへの相談と画像の生成は使える。そのときは「使うリポジトリごと」の 6 を飛ばす。「入ったかを確かめる」の 2 の `git fetch origin` は失敗する（`not a git repository`）が、確認のダイアログが出なければ allow は効いている
-- 健さんは使わなくても回る。使うときのラッパーは Windows PowerShell 用で、各 PC に Codex CLI と健さんの AGENTS.md が要る
+- 健さんは使わなくても回る。使うときは、各 PC に Codex CLI と健さんの AGENTS.md が要る。ラッパーは Node.js で書いてあり、Windows・Mac・Linux で動く（Mac は、テストを Linux で通しただけで、実機ではまだ確かめていない）
 
 ## 導入
 
@@ -27,7 +27,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 - **PC ごとに1回**：マーケットプレイス（このリポジトリ）を登録する。プラグインの入手元になる
 - **使うリポジトリごと**：設定ファイルを写して、プラグインをそのリポジトリにだけ入れる。入れたリポジトリでだけチームが動く
 
-終わったら「入ったかを確かめる」で確かめる。コマンドはどれも PowerShell で打つ（VS Code のターミナルでよい）。`<ホーム>` は `C:\Users\<ユーザー名>`、`<リポジトリのパス>` は入れるリポジトリのフォルダの場所（例：`C:\GitHub\my-site`）。
+終わったら「入ったかを確かめる」で確かめる。コマンドはどれも PowerShell で打つ（VS Code のターミナルでよい）。`<ホーム>` は `C:\Users\<ユーザー名>`、`<リポジトリのパス>` は入れるリポジトリのフォルダの場所（例：`C:\GitHub\my-site`）。Mac・Linux では、下の「Mac・Linux での読み替え」を見る。
 
 ### Claude Code に頼んで入れる
 
@@ -133,10 +133,10 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 
    ```
    Bash ツールで、次のコマンドを書いてある形のまま単独で打って：
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.ps1" -Mode check
+   node "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.mjs" -Mode check
    ```
 
-   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。ダイアログを見逃しても、セッションの記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たっている
+   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。Codex CLI が入っていなくても打てる。ダイアログを見逃しても、セッションの記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たっている
 
 確かめが済んだら、下の「使い方」のとおりにガネーシャに頼めば使える。
 
@@ -148,12 +148,37 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 - **確認が出ても「常に許可」は選ばない。** `.claude/settings.local.json` に決まりが書かれ、settings.json の allow が効いていないことが隠れる。出たら、「使うリポジトリごと」の 4 の信頼を見直す
 - **写す元は、マーケットプレイスの中か、このリポジトリの作業ツリー。** どちらも `.gitattributes` で LF にそろえてある。GitHub の画面からコピーして貼るより、ファイルごと写す
 
+### Mac・Linux での読み替え
+
+上の手順は Windows（PowerShell）で書いてある。Mac・Linux では、次のように読み替える（Mac は実機ではまだ確かめていない）。
+
+- コマンドはターミナル（zsh・bash）で打つ。`<ホーム>` は `/Users/<ユーザー名>`（Linux は `/home/<ユーザー名>`）、パスの区切りは `/`
+- 「最初に」：`claude --version` が通らなければ、Claude Code を入れる（`npm install -g @anthropic-ai/claude-code` など）
+- 「使うリポジトリごと」の 1：写すのは次でよい（`cp -n` は同じ名前のファイルを上書きしない。2行目で `True` のファイルがあれば、表のとおり手で合わせる。Linux の新しい `cp` は、既にあるファイルを飛ばしたときに終了コード 1 を返すことがあるが、写さなかっただけなので気にしなくてよい）
+
+  ```
+  cd <リポジトリのパス>
+  for f in .claude/settings.json .claude/ai-team.json docs/team/Ganesha.md docs/team/common-rules.md; do [ -e "$f" ] && echo "$f : True" || echo "$f : False"; done
+  src=~/.claude/plugins/marketplaces/ai-team-skills/repo-files
+  mkdir -p .claude docs/team
+  cp -n "$src/claude/settings.json" "$src/claude/ai-team.json" .claude/
+  cp -n "$src/docs/team/Ganesha.md" "$src/docs/team/common-rules.md" docs/team/
+  ```
+
+- 「使うリポジトリごと」の 4：信頼は1回でよい（`cd <リポジトリのパス> && claude`）。ドライブ名の大文字・小文字の話は Windows だけ
+- 「入ったかを確かめる」の 2：健さんの行は、`<ホーム>` を `/Users/<ユーザー名>` にした同じ形（`node "/Users/<ユーザー名>/.claude/plugins/cache/..." -Mode check`）。`~` や `$HOME` は書かない（そのままの文字列で allow と比べるため）
+
 ### 導入済みのリポジトリへの反映
 
 - **プラグインの中身は自動で届く。** 自動更新をオンにしてあれば（「導入」の「PC ごとに1回」の2）、そのリポジトリのセッションで最初のメッセージを送ってから最大10分で、マーケットプレイスと `--scope project` のプラグインが新しい版になる。効くのは、次に VS Code を開き直したときか `/reload-plugins` の後。そのリポジトリでセッションを使わない間は、古い版のまま
 - すぐ入れたいときだけ手で打つ：PC ごとに `claude plugin marketplace update ai-team-skills`、リポジトリごとに根で `claude plugin update ai-team@ai-team-skills --scope project`、そのあと VS Code を開き直す。入った版は `<ホーム>/.claude/plugins/installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`
 - **リポジトリ側（`repo-files/` の中身）は手で反映する。** `docs/team/Ganesha.md`・`common-rules.md` を今の版に差し替えて、固有の分（チェックコマンドなど）を戻す。写す元は、マーケットプレイスの中の `repo-files\`（新しい版が届いた後に。急ぐなら `claude plugin marketplace update ai-team-skills` を打ってから）か、このリポジトリの作業ツリー。`.claude/ai-team.json` に古い `plannerWritable` が残っていても動く（読み捨てる）
 - プラグインだけ先に届いて、リポジトリ側の文書が古いままの間は、ガネーシャはチーム共通の決まり（team-rules.md）に従い、まーちゅうに差し替えを伝える（team-rules.md の「作業の進め方」に書いてある）
+- **健さんのラッパーを Node.js にした版（#100）からは、`.claude/settings.json` の allow に次の1行が要る。** プラグインからは allow を足せないので、各リポジトリで、今ある `invoke-codex.ps1` の行のすぐ下に足す。足さないと、ガネーシャ・メジェドが健さんを呼ぶたびに確認のダイアログが出る（auto モードでは止まる）。Windows で前の呼び方（`powershell.exe ... invoke-codex.ps1`）を使うものは、中継が残っているので今までどおり動く
+
+  ```
+  "Bash(node \"*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.mjs\" *)",
+  ```
 
 ## 使い方
 
@@ -193,7 +218,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 | --- | --- |
 | `docs/team-rules.md` | チーム共通の決まり（言語・作業の進め方・チームの表・選び方の目安）。ガネーシャにはセッションの始めに SessionStart フックで入る。メジェドと藤さんは最初に Read で読む |
 | `agents/mejed.md`・`agents/adversary.md` | メジェドと藤さんの定義 |
-| `skills/codex/` | 健さんの呼び方と、ラッパー `scripts/invoke-codex.ps1`（read-only・秘密情報の照らし合わせ・返事は標準出力に出すだけ） |
+| `skills/codex/` | 健さんの呼び方と、ラッパー `scripts/invoke-codex.mjs`（Node.js。read-only・秘密情報の照らし合わせ・返事は標準出力に出すだけ）。`scripts/invoke-codex.ps1` は、前の呼び方を残すための中継 |
 | `hooks/guard-code-edit.mjs` | 編集のガード。秘密情報のファイルと、リポジトリの外（メモリ・計画ファイル・scratchpad を除く）の編集だけを止める。誰が編集するかは見ない |
 | `hooks/session-start.mjs` | team-rules.md をセッションの始めに入れる |
 | `hooks/ai-team-config.mjs` | ガードとラッパーが使う判定の部品（秘密情報の既定の一覧・`.claude/ai-team.json` の読み込み） |
