@@ -214,6 +214,12 @@ try {
 		run('呼び名: 前後の空白を除いて40文字なら通る（長さは空白を取った後で数える）', { file: p('src', 'a.php') }, 0);
 	});
 
+	// コンテナの中のレビューの設定（container。#99）：正しければ、ガードの動きは今までどおり
+	withConfig(j({ secretPatterns: [], container: { setup: 'npm ci', test: 'npm test' } }), () => {
+		run('container: 正しければ、コードは通る', { file: p('src', 'a.php') }, 0);
+		run('container: 正しくても、.env は止まる', { file: p('.env') }, 2);
+	});
+
 	// 壊れているとき：設定ファイル自体のほかは、すべての編集を止める
 	const broken = [
 		['JSON として壊れている', '{ not json'],
@@ -230,6 +236,13 @@ try {
 		['names の呼び名に U+2028', j({ names: { メジェド: `ハナ${String.fromCharCode(0x2028)}コ` } })],
 		['names の呼び名に U+0085（C1 制御文字）', j({ names: { メジェド: `ハナ${String.fromCharCode(0x85)}コ` } })],
 		['names の呼び名が 41 文字', j({ names: { メジェド: 'あ'.repeat(41) } })],
+		['知っているキーの打ち間違い（containers）', j({ containers: { setup: 'npm ci', test: 'npm test' } })],
+		['container が配列', j({ container: ['npm ci'] })],
+		['container に test が無い', j({ container: { setup: 'npm ci' } })],
+		['container の setup が空', j({ container: { setup: ' ', test: 'npm test' } })],
+		['container の test が文字列でない', j({ container: { setup: 'npm ci', test: 1 } })],
+		['container のコマンドに改行', j({ container: { setup: 'npm ci\nrm -rf /', test: 'npm test' } })],
+		['container に知らないキー', j({ container: { setup: 'npm ci', test: 'npm test', image: 'x' } })],
 		['文字列の配列でない（文字列）', j({ secretPatterns: 'x' })],
 		['文字列の配列でない（数）', j({ secretPatterns: [1] })],
 		['plannerWritable が配列でない', j({ plannerWritable: 'x' })],
