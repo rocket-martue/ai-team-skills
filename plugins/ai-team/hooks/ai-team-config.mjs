@@ -369,6 +369,11 @@ function parseNames(value) {
 			throw new Error(`names の呼び名が ${NAME_MAX_LENGTH} 文字を超えています`);
 		}
 
+		// 見えない文字（Default_Ignorable_Code_Point。ハングルの埋め字 U+3164・U+1160 などは \p{L} にも入る）は、語を見えないまま割れるので受けない
+		if (/\p{Default_Ignorable_Code_Point}/u.test(trimmed)) {
+			throw new Error('names の呼び名に、見えない文字があります');
+		}
+
 		if (!NAME_CHARS.test(trimmed)) {
 			throw new Error('names の呼び名に、文字・数字・空白・「・」「ー」・濁点の結合文字以外（句読点・かっこ・記号・ほかの結合文字など）があります');
 		}

@@ -436,7 +436,7 @@ try {
 	});
 	// 今使っている形の呼び名は通る（#110）
 	// 濁点・半濁点の結合文字（U+3099・U+309A）は通る
-	for (const ok of ['アヤ', 'ハナコ', 'ゆう', 'ケン', 'Aya', 'ジュン ちゃん', 'ハナ子', 'ジュン　ちゃん', 'ハナ・コ', 'ハナー', 'ガ゙', `ハ${String.fromCharCode(0x309a)}`, `ガ${String.fromCharCode(0x3099)}`]) {
+	for (const ok of ['アヤ', 'ハナコ', 'ゆう', 'ケン', 'Aya', 'ジュン ちゃん', 'ハナ子', 'ジュン　ちゃん', 'ハナ・コ', 'ハナー', `ハ${String.fromCharCode(0x309a)}`, `ガ${String.fromCharCode(0x3099)}`]) {
 		withConfig(j({ names: { メジェド: ok } }), () => {
 			run(`呼び名: ${JSON.stringify(ok)} は通る`, { file: p('src', 'a.php') }, 0);
 		});
@@ -482,6 +482,9 @@ try {
 		['names の呼び名に結合書記素接合子（U+034F）', j({ names: { メジェド: `ハナ${String.fromCharCode(0x34f)}コ` } })],
 		['names の呼び名に単独の濁点（U+309B）', j({ names: { メジェド: `ガ${String.fromCharCode(0x309b)}` } })],
 		['names の呼び名が禁止語（「・」で割った 許・可）', j({ names: { メジェド: '許・可' } })],
+		['names の呼び名に見えない文字（ハングルの埋め字 U+3164 で割った 許可）', j({ names: { メジェド: `許${String.fromCharCode(0x3164)}可` } })],
+		['names の呼び名に見えない文字（ハングルの埋め字 U+1160）', j({ names: { メジェド: `ハナ${String.fromCharCode(0x1160)}コ` } })],
+		['names の呼び名に見えない文字（既定の名前の末尾に U+3164）', j({ names: { まーちゅう: `ガネーシャ${String.fromCharCode(0x3164)}` } })],
 		['names の呼び名が禁止語（長音で割った adーmin）', j({ names: { メジェド: 'adーmin' } })],
 		['names の呼び名が禁止語を含む（Badminton。部分一致は受け入れる）', j({ names: { メジェド: 'Badminton' } })],
 		['names の呼び名がほかの既定の名前（長音が漢字の一：ガネ一シャ）', j({ names: { まーちゅう: 'ガネ一シャ' } })],
