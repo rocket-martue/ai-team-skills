@@ -228,6 +228,17 @@ function expectPass(name, setup, { base = '', mode = 'review' } = {}) {
 
 const envBody = Array.from({ length: 20 }, (_, i) => `KEY_${i}=value${i}`).join('\n') + '\n';
 
+// 名前に `\` を含む未追跡の秘密情報（Linux・Mac では `.env\local` は1つの名前で、.env* に当たる。#107）。Windows は名前に `\` を使えないので飛ばす
+if (isWindows) {
+	console.log('SKIP: 名前に \\ を含む未追跡の .env\\local（Windows は名前に \\ を使えない）');
+} else {
+	const bsName = '.env' + String.fromCharCode(92) + 'local';
+	expectStop('名前に \\ を含む未追跡の秘密情報（.env\\local）', ({ git, write }) => {
+		commitAll(git, 'init');
+		write(bsName, 'S=1\n');
+	});
+}
+
 // ---- 止まる 9つ ----
 expectStop('未追跡の .dev.vars', ({ git, write }) => {
 	commitAll(git, 'init');
@@ -1208,6 +1219,16 @@ if (!isWindows) {
 		const other = path.resolve(path.sep, 'Other106', 'y.png');
 		const got = relOrAbs(other, base, true);
 		return [got === other.replace(/\\/g, '/'), got];
+	});
+	// `\` を `/` にするのは Windows だけ（#107）。OS の引数（4つ目）で両方の枝を確かめる
+	const bs = '\\';
+	sendCase('relOrAbs: Linux・Mac（windows なし）では、名前の中の \\ をそのままにする', () => {
+		const got = relOrAbs(path.join(base, `.env${bs}local`), base, false, false);
+		return [got === `.env${bs}local`, got];
+	});
+	sendCase('relOrAbs: Windows では、\\ を / にする', () => {
+		const got = relOrAbs(`${base}${path.sep}.env${bs}local`, base, false, true);
+		return [got === '.env/local', got];
 	});
 }
 

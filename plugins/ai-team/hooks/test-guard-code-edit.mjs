@@ -611,6 +611,68 @@ try {
 		check('forPath: win32 では場所の判定をそろえる', forPath('C:/X/Repo', 'win32') === 'c:/x/repo');
 	}
 
+	// toSlash：`\` を `/` にするのは Windows だけ（#107。Linux・Mac では `\` は名前の文字）
+	{
+		const { toSlash, isSecretPath, globToRegExp } = await import('./ai-team-config.mjs');
+		const bs = '\\';
+		check('toSlash: Linux では .env\\local をそのままにする', toSlash(`.env${bs}local`, false) === `.env${bs}local`);
+		check('toSlash: Windows では .env\\local を .env/local にする', toSlash(`.env${bs}local`, true) === '.env/local');
+		check('Linux の扱い: .env\\local（1つの名前）が .env* に当たる', isSecretPath(toSlash(`.env${bs}local`, false)));
+		check('Windows の扱い: .env\\local は .env/local（.env フォルダの中）になり、.env* には当たらない', !isSecretPath(toSlash(`.env${bs}local`, true)));
+		check('Windows の扱い: .kv\\x が .kv/x として当たる', isSecretPath(toSlash(`.kv${bs}x`, true)));
+		check('Linux の扱い: .kv\\x は1つの名前で、.kv/ には当たらない', !isSecretPath(toSlash(`.kv${bs}x`, false)));
+		check('Windows の扱い: sub\\.env が sub/.env として当たる', isSecretPath(toSlash(`sub${bs}.env`, true)));
+		check('Linux の扱い: sub\\.env は1つの名前で、既定の一覧には当たらない', !isSecretPath(toSlash(`sub${bs}.env`, false)));
+
+		// u フラグ：? はコードポイント1つに当たる
+		const emoji = String.fromCodePoint(0x1f511);
+		const re = globToRegExp('private/?.json');
+		check('? は絵文字1つに当たる（private/<絵文字>.json）', re.test(`private/${emoji}.json`));
+		check('? は2文字には当たらない（private/ab.json）', !re.test('private/ab.json'));
+		check('? は / には当たらない', !re.test('private//.json'));
+		// u フラグで new RegExp が投げない（- / 日本語 絵文字 を含むグロブ）
+		for (const g of ['a-b/c.txt', '**/x-y', 'x/**', '秘密/ぱ*', `${emoji}/*.json`, 'a.b+c(d)^$|/?']) {
+			let ok = true;
+			try {
+				globToRegExp(g);
+			} catch {
+				ok = false;
+			}
+			check(`globToRegExp が投げない: ${g}`, ok);
+		}
+		// secretPatterns に書くグロブを globToRegExp に直接通し、u フラグ付きでも今までどおり当たる・当たらないを見る
+		// （設定ファイルを経由した当たりは、上の withConfig の確かめがガードの通しで見ている）
+		const cases = [
+			['**/secret.txt', ['secret.txt', 'a/secret.txt', 'a/b/secret.txt'], ['asecret.txt', 'secret.txt.bak']],
+			['private/**', ['private', 'private/a', 'private/a/b.json'], ['privatex/a', 'x/private/a']],
+			['a/**/b.txt', ['a/b.txt', 'a/x/b.txt', 'a/x/y/b.txt'], ['ab.txt', 'a/xb.txt']],
+			['*.key', ['a.key', '.key'], ['a/b.key', 'a.keys']],
+			['a.b+c(d)^$|/?', ['a.b+c(d)^$|/x'], ['aXb+c(d)^$|/x', 'a.b+c(d)^$|/xy', 'a.b+c(d)^$|//']],
+			['a-b/c.txt', ['a-b/c.txt'], ['a-b/cxtxt']],
+		];
+		for (const [g, hits, misses] of cases) {
+			const r = globToRegExp(g);
+			for (const p of hits) {
+				check(`secretPatterns（u 付き）${g} に当たる: ${p}`, r.test(p));
+			}
+			for (const p of misses) {
+				check(`secretPatterns（u 付き）${g} に当たらない: ${p}`, !r.test(p));
+			}
+		}
+		// 足したグロブを isSecretPath の第2引数に渡す経路でも、既定の一覧と合わせて判定できる
+		const extra = [globToRegExp('private/**'), globToRegExp('**/*.key')];
+		check('足したグロブ経由: private/a.json に当たる', isSecretPath('private/a.json', extra));
+		check('足したグロブ経由: x/y/a.key に当たる', isSecretPath('x/y/a.key', extra));
+		check('足したグロブ経由: 既定の .env も今までどおり当たる', isSecretPath('.env', extra));
+		check('足したグロブ経由: 関係ない src/a.js には当たらない', !isSecretPath('src/a.js', extra));
+		// NFC と NFD は区別して当てる（OS に依らない事実の記録。#107）
+		const nfc = '秘密/ぱ'.normalize('NFC');
+		const nfd = '秘密/ぱ'.normalize('NFD');
+		const reN = globToRegExp(`${nfc}*`);
+		check('NFC のグロブは NFC の名前に当たる', reN.test(nfc));
+		check('NFC のグロブは NFD の名前に当たらない（区別する。Mac での扱いは未確認）', !reN.test(nfd));
+	}
+
 	// ---- settings.json ----
 	const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
 	const allow = settings.permissions?.allow || [];

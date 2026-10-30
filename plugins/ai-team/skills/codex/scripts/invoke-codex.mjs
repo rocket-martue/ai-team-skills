@@ -273,8 +273,10 @@ function checkWorkingDirectory(dir) {
 
 // 共有モジュールの check に渡すパス（リポジトリの根からの相対。区切りは /）。根の中なら相対パス、外なら絶対パス
 // 根の中かは、Windows・Mac で大文字小文字をそろえて見る（sameCaseFolded と同じ。Mac の既定の APFS で根の綴りが違っても相対にする。当たりやすくなる側）
-export function relOrAbs(p, base, fold = foldsForMatch) {
-	return (isUnderFolded(p, base, fold) ? p.slice(withSep(base).length) : p).replace(/\\/g, '/');
+// 区切りの `\` を `/` にするのは Windows だけ（Linux・Mac の `\` は名前の文字。共有モジュールの toSlash と同じ。#107）。windows は確かめのために差し替えられる
+export function relOrAbs(p, base, fold = foldsForMatch, windows = isWindows) {
+	const rel = isUnderFolded(p, base, fold) ? p.slice(withSep(base).length) : p;
+	return windows ? rel.replace(/\\/g, '/') : rel;
 }
 
 // 健さんに送るファイル（頼みの文・参照画像）を照らすパス。見たままのパスと、リンクをたどった実体のパスの両方を、
