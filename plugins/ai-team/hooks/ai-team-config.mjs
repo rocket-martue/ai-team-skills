@@ -94,7 +94,8 @@ export function realPath(p) {
 // git を起こさずに .git から求める（ガードは編集のたびに走るため）。
 // - .git がディレクトリ：その場所が根で、メインも同じ
 // - .git がファイル（worktree）：`gitdir: <パス>` の先の commondir から、共通の .git を求め、その親をメインとする
-// 見つからなければ null。メインを求められなければ main は null（呼び出し側で止めるかを決める）。
+// 見つからなければ null。メインを求められなければ main は null（サブモジュールの形など、commondir が無いだけのときはこれ。呼び出し側は、メインは無いとして進める）。
+// .git のファイルや commondir を読めない（アクセス権など）・gitdir: の行が無いときは、メインが無いのとは区別して broken を真にする（呼び出し側で止める）。
 export function gitRoots(dir) {
 	let current = path.resolve(dir);
 
@@ -104,23 +105,40 @@ export function gitRoots(dir) {
 
 		try {
 			st = lstatSync(dotGit);
-		} catch {
-			st = null;
+		} catch (e) {
+			// 無いことを示すもの（ENOENT・ENOTDIR）だけを「無い」とする。アクセス権などで調べられないときは、黙って飛ばさず broken にする。
+			if (!(e && (e.code === 'ENOENT' || e.code === 'ENOTDIR'))) {
+				return { root: current, main: null, broken: true };
+			}
 		}
 
 		if (st !== null && st.isDirectory()) {
-			return { root: current, main: current };
+			return { root: current, main: current, broken: false };
 		}
 
 		if (st !== null && st.isFile()) {
+			let m;
+			let gitDir;
+
 			try {
-				const m = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+?)\s*$/m);
-				const gitDir = path.resolve(current, m[1]);
+				m = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+?)\s*$/m);
+			} catch {
+				return { root: current, main: null, broken: true };
+			}
+
+			if (m === null) {
+				return { root: current, main: null, broken: true };
+			}
+
+			gitDir = path.resolve(current, m[1]);
+
+			try {
 				const common = path.resolve(gitDir, readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim());
 
-				return { root: current, main: path.basename(common) === '.git' ? path.dirname(common) : null };
-			} catch {
-				return { root: current, main: null };
+				return { root: current, main: path.basename(common) === '.git' ? path.dirname(common) : null, broken: false };
+			} catch (e) {
+				// commondir が無いだけ（ENOENT・ENOTDIR）なら、メインは無いとして進める。それ以外は読めていないので broken
+				return { root: current, main: null, broken: !(e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) };
 			}
 		}
 

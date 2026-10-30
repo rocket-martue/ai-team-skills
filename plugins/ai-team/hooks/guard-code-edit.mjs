@@ -45,8 +45,25 @@ function isInside(target, dir) {
 	return t === d || t.startsWith(d.endsWith('/') ? d : d + '/');
 }
 
+// 相対パス（区切りは /）が、既定の一覧か足したグロブに当たるか。`.claude/worktrees/<名前>/` の中は、その頭を剥がした相対パスでも判定する。
+// 入れ子でも、剥がせなくなるまで繰り返す。判定は、頭を剥がす前のパスにも当てる（worktree の名前が `.kv` などでも抜けないように）。
+function isSecretRel(projectRel, regexps) {
+	if (isSecretPath(projectRel, regexps)) {
+		return true;
+	}
+
+	let rel = projectRel;
+	for (let m = WORKTREE_PREFIX.exec(rel); m; m = WORKTREE_PREFIX.exec(rel)) {
+		rel = m[1];
+	}
+
+	return isSecretPath(rel, regexps);
+}
+
 // 止めるなら理由の文字列、通すなら null を返す。
-function judge(absolute, projectDir, outsideWritable, label, secretRegexps) {
+// secretRegexps は、全部の設定のパターン（プロジェクトの根からの相対パスに当てる）。
+// perRoot は [{ root, regexps }]。パターンを書いた設定の根からの相対パスにも当てる（入れ子のリポジトリの設定が効くように）。
+function judge(absolute, projectDir, outsideWritable, label, secretRegexps, perRoot) {
 	const secretReason = `guard-code-edit: ${label} は秘密情報のファイルなので編集できません。`;
 
 	if (!isInside(absolute, projectDir)) {
@@ -64,46 +81,56 @@ function judge(absolute, projectDir, outsideWritable, label, secretRegexps) {
 
 	const projectRel = forMatch(path.relative(projectDir, absolute).split(path.sep).join('/'));
 
-	// 秘密情報の判定は、worktree の頭を剥がす前のパスにも当てる（worktree の名前が `.kv` などでも抜けないように）。
-	if (isSecretPath(projectRel, secretRegexps)) {
+	if (isSecretRel(projectRel, secretRegexps)) {
 		return secretReason;
 	}
 
-	// `.claude/worktrees/<名前>/` の中は、その頭を剥がした相対パスでも判定する。入れ子でも、剥がせなくなるまで繰り返す。
-	let rel = projectRel;
-	for (let m = WORKTREE_PREFIX.exec(rel); m; m = WORKTREE_PREFIX.exec(rel)) {
-		rel = m[1];
-	}
+	const underRoot = perRoot.some(({ root, regexps }) => {
+		if (!isInside(absolute, root)) {
+			return false;
+		}
+		return isSecretRel(forMatch(path.relative(root, absolute).split(path.sep).join('/')), regexps);
+	});
 
-	return isSecretPath(rel, secretRegexps) ? secretReason : null;
+	return underRoot ? secretReason : null;
 }
 
 // 設定ファイルを読む根を集める（#108。ラッパーと同じく、作業の根とメインのチェックアウトの根の両方を読む）。
 // - プロジェクトの根と、そのメインの根
-// - フックの cwd の git の根と、そのメインの根（EnterWorktree の後は、cwd が worktree、CLAUDE_PROJECT_DIR がメインを指すため）
+// - フックの cwd の git の根と、そのメインの根。ただし、そのメインの根がプロジェクトのメインの根と同じとき（同じリポジトリ）だけ
+//   （EnterWorktree の後は、cwd が worktree、CLAUDE_PROJECT_DIR がメインを指すため。関係ないリポジトリの壊れた設定で、全部の編集が止まらないように）
 // - 編集先がプロジェクトの中なら、編集先が入っている git の根（.claude/worktrees/<名前>/ の中など）と、そのメインの根
+// 返すのは { roots: 根の配列, problem: 止める理由（無ければ null） }。.git を読めないときは problem に入れる。
 function configRoots(projectDir, cwd, specified) {
 	const roots = [projectDir];
+	let problem = null;
 	const add = (r) => {
 		if (r && !roots.some((x) => normalize(x) === normalize(r))) roots.push(r);
 	};
-	const own = gitRoots(projectDir);
+	const look = (dir) => {
+		const found = gitRoots(dir);
+		if (found !== null && found.broken && problem === null) {
+			problem = `guard-code-edit: ${found.root} の .git を読めない（アクセス権など）か形が壊れているので、設定ファイルを読む根を決められず編集を止めました。`;
+		}
+		return found;
+	};
+	const own = look(projectDir);
 	if (own !== null) add(own.main);
 	if (typeof cwd === 'string' && cwd !== '') {
-		const here = gitRoots(cwd);
-		if (here !== null) {
+		const here = look(cwd);
+		if (here !== null && own !== null && own.main !== null && here.main !== null && normalize(here.main) === normalize(own.main)) {
 			add(here.root);
 			add(here.main);
 		}
 	}
 	if (isInside(specified, projectDir)) {
-		const target = gitRoots(specified);
+		const target = look(specified);
 		if (target !== null) {
 			add(target.root);
 			add(target.main);
 		}
 	}
-	return roots;
+	return { roots, problem };
 }
 
 // 止めるなら止め、通すなら終了コード 0 で終わる。
@@ -125,8 +152,9 @@ function main() {
 		block('guard-code-edit: フック入力の tool_input の形が思わぬものなので編集を止めました。');
 	}
 	const target = toolInput.file_path || toolInput.notebook_path;
-	if (!target) {
-		process.exit(0);
+	// 編集先が無い・空のときも止める（見ないまま通すと、判定が抜けるため）
+	if (target === undefined || target === null || target === '') {
+		block('guard-code-edit: 編集先のパス（file_path・notebook_path）が無いか空なので編集を止めました。');
 	}
 	if (typeof target !== 'string') {
 		block('guard-code-edit: 編集先のパスが文字列ではないので編集を止めました。');
@@ -135,10 +163,14 @@ function main() {
 	const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
 	const specified = path.resolve(projectDir, target);
 	const real = realPath(specified);
+	const projectReal = realPath(projectDir) || projectDir;
 
 	// リポジトリごとの追加（.claude/ai-team.json。無ければ repo-files/claude/ai-team.json）を、読む根の全部から合わせる。
 	// どれかが壊れていたら、黙って既定の一覧に戻らず、編集を止める。
-	const roots = configRoots(projectDir, input.cwd, specified);
+	const { roots, problem } = configRoots(projectDir, input.cwd, specified);
+	if (problem !== null) {
+		block(problem);
+	}
 	const loaded = roots.map((root) => readConfig(CONFIG_CANDIDATES.map((c) => path.join(root, ...c.split('/')))));
 
 	const linkBroken = loaded.find((l) => l.status === 'broken' && l.link);
@@ -146,16 +178,28 @@ function main() {
 		block(`guard-code-edit: 設定ファイル ${linkBroken.file}（または親のフォルダ）がリンク切れなので編集を止めました。リンクを手で直してください。`);
 	}
 
-	// 編集先が、読む根のどれかの設定ファイルそのものか。設定ファイルがリンクのときは当たらない（ふつうの判定に回す。リンク先が秘密情報なら止まる）。
+	// 編集先が、プロジェクトの中にある根の設定ファイルそのものか。通すのは、その根で実際に読む1つだけ
+	// （.claude/ai-team.json があればそれ、無ければ repo-files/claude/ai-team.json）。しかも、指定のパスと実体のパスの両方が、
+	// 既定の秘密情報の判定を通ったときだけ（`.claude/worktrees/.kv/` の中などは通さない）。
+	// プロジェクトの外の根（細工した .git が指す場所など）の設定ファイルは、読むだけで、編集は「外」の判定に回す。
+	// 設定ファイルがリンクのときは当たらない（ふつうの判定に回す。リンク先が秘密情報なら止まる）。
 	// 設定ファイルそのものは、壊れていても・secretPatterns が当たっても直せるように通す（秘密情報ではない）。
+	const cleanOfDefaults = (abs, base) => !SECRET_PATTERNS.some((re) => re.test(forMatch(path.relative(base, abs).split(path.sep).join('/'))));
 	const isConfigItself =
 		real !== null &&
-		roots.some((root) =>
-			CONFIG_CANDIDATES.some((c) => {
-				const file = path.join(root, ...c.split('/'));
-				return normalize(specified) === normalize(file) && normalize(real) === normalize(path.join(realPath(root) || root, ...c.split('/')));
-			})
-		);
+		roots.some((root, i) => {
+			if (!isInside(root, projectDir) || !isInside(realPath(root) || root, projectReal)) {
+				return false;
+			}
+			const l = loaded[i];
+			const file = l.status === 'none' ? path.join(root, ...CONFIG_CANDIDATES[0].split('/')) : l.file;
+			return (
+				normalize(specified) === normalize(file) &&
+				normalize(real) === normalize(path.join(realPath(root) || root, path.relative(root, file))) &&
+				cleanOfDefaults(specified, projectDir) &&
+				cleanOfDefaults(real, projectReal)
+			);
+		});
 	if (isConfigItself) {
 		process.exit(0);
 	}
@@ -170,14 +214,17 @@ function main() {
 	}
 
 	const secretRegexps = loaded.flatMap((l) => (l.status === 'ok' ? l.secretRegexps : []));
+	const perRoot = (toReal) =>
+		loaded.flatMap((l, i) => (l.status === 'ok' && l.secretRegexps.length > 0 ? [{ root: toReal ? realPath(roots[i]) || roots[i] : roots[i], regexps: l.secretRegexps }] : []));
 	const reasons = [
-		judge(specified, projectDir, OUTSIDE_WRITABLE, target, secretRegexps),
+		judge(specified, projectDir, OUTSIDE_WRITABLE, target, secretRegexps, perRoot(false)),
 		judge(
 			real,
-			realPath(projectDir) || projectDir,
+			projectReal,
 			OUTSIDE_WRITABLE.map((entry) => ({ ...entry, base: realPath(entry.base) || entry.base })),
 			`${target}（リンク先 ${real}）`,
-			secretRegexps
+			secretRegexps,
+			perRoot(true)
 		),
 	].filter((r) => r !== null);
 
