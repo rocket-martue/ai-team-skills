@@ -3,12 +3,14 @@
 // Claude Code（ガネーシャ・メジェド）から Codex CLI（健さん）を呼ぶラッパー。Windows・Mac・Linux で動く（#100）。
 // モードは consult（読むだけの相談）・review（読むだけのレビュー）・image（画像の生成）の3つだけ。
 // と、codex を呼ばない check（秘密情報と設定ファイルの確かめだけ。allow が効くかを、Codex の枠を使わずに確かめるため）。
-// 実装（ファイルの書き換え）は頼まない。sandbox は常に read-only。返事は標準出力に出すだけで、保存しない。
+// 実装（ファイルの書き換え）は頼まない。返事は標準出力に出すだけで、保存しない。
+// この PC で動く健さんの sandbox は常に read-only。review・check に -Container を付けると、Docker のコンテナの中で動かし、
+// 健さんにテストも打たせる（コンテナの中だけ workspace-write。#99。流れは docs/tasks/codex-container/plan.md）。
 //
 // 呼び方（リポジトリの根から、Bash ツールで）:
 //   node "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.mjs" -Mode consult -PromptFile <一時ファイル>
 //
-// 引数の名前は、前の invoke-codex.ps1 と同じ（-Mode・-PromptFile・-WorkingDirectory・-Image・-Base・-Task）。
+// 引数の名前は、前の invoke-codex.ps1 と同じ（-Mode・-PromptFile・-WorkingDirectory・-Image・-Base・-Task）と、値を取らない -Container。
 // 大文字小文字の違いは受ける。略した形（-M など）は受けない。
 //
 // 終了コード: 0 = 成功 / 1 = 呼ぶ前の確認で止めた / 2 = image で画像のパスが取れなかった / それ以外 = codex の終了コード
@@ -72,20 +74,28 @@ function makePrivateTempDir(prefix) {
 // ---- 引数 ----
 
 const OPTIONS = ['Mode', 'PromptFile', 'WorkingDirectory', 'Image', 'Base', 'Task'];
+// 値を取らない旗（前・間・後ろのどこに置いても、次の語を値として食わない）
+const FLAGS = ['Container'];
 const MODES = ['consult', 'review', 'image', 'check'];
 
 function parseArgs(argv) {
-	const opts = { Mode: '', PromptFile: '', WorkingDirectory: '', Image: '', Base: '', Task: '' };
+	const opts = { Mode: '', PromptFile: '', WorkingDirectory: '', Image: '', Base: '', Task: '', Container: false };
 	for (let i = 0; i < argv.length; i++) {
 		const token = argv[i];
+		const flag = token.startsWith('-') ? FLAGS.find((f) => `-${f}`.toLowerCase() === token.toLowerCase()) : undefined;
+		if (flag !== undefined) {
+			opts[flag] = true;
+			continue;
+		}
 		const name = token.startsWith('-') ? OPTIONS.find((o) => `-${o}`.toLowerCase() === token.toLowerCase()) : undefined;
-		if (name === undefined) stopWrapper(`知らない引数です: ${token}（使えるのは ${OPTIONS.map((o) => `-${o}`).join('・')}）`);
+		if (name === undefined) stopWrapper(`知らない引数です: ${token}（使えるのは ${[...OPTIONS, ...FLAGS].map((o) => `-${o}`).join('・')}）`);
 		if (i + 1 >= argv.length) stopWrapper(`${token} の値がありません。`);
 		opts[name] = argv[++i];
 	}
 	const mode = MODES.find((m) => m === opts.Mode.toLowerCase());
 	if (mode === undefined) stopWrapper(`-Mode は ${MODES.join('・')} のどれかにしてください: ${opts.Mode}`);
 	opts.Mode = mode;
+	if (opts.Container && mode !== 'review' && mode !== 'check') stopWrapper('-Container を付けられるのは review と check だけです。');
 	// -Task は使わない（返事を保存していたころのタスク名）。古い呼び方（gh-skills の gh-pr など）で渡されても止めないよう、受け取って捨てる
 	return opts;
 }
@@ -137,10 +147,19 @@ function isExecutable(p) {
 	}
 }
 
+// git の頭に付ける引数。-Container のときは、fsmonitor のフックを動かさず、索引も書き戻さない（D12。#99）
+let gitPrefix = [];
+
 // git を呼ぶ（失敗しても例外にせず、終了コードと出力を返す）
 function git(args, cwd) {
-	const r = spawnSync('git', args, { cwd, maxBuffer: 256 * 1024 * 1024 });
-	return { code: r.status === null ? 1 : r.status, stdout: r.stdout ? r.stdout.toString('utf8') : '' };
+	const r = gitRaw(args, cwd);
+	return { code: r.code, stdout: r.stdout.toString('utf8') };
+}
+
+// 出力をバイト列のまま返す（差分は、元のファイルのバイトのまま渡すため）
+function gitRaw(args, cwd) {
+	const r = spawnSync('git', [...gitPrefix, ...args], { cwd, maxBuffer: 1024 * 1024 * 1024 });
+	return { code: r.status === null ? 1 : r.status, stdout: r.stdout || Buffer.alloc(0) };
 }
 
 // メインのチェックアウト（worktree list の1件目）の根。worktree から呼ばれても、そこの設定ファイルも読むため。
@@ -196,14 +215,354 @@ function invokeCodex(codex, args, { stdin = null, cwd, workDir }) {
 	return code;
 }
 
-function main(cleanups) {
-	const opts = parseArgs(process.argv.slice(2));
+// 共有モジュールの check を呼ぶ。paths は照らすパスの一覧（リポジトリの根からの相対）。
+// 返り値の code は共有モジュールの終了コード（0・1・2・3）、out は --out に書かれたもの
+function runConfigCheck(configModule, checkRoots, paths) {
+	const checkDir = makePrivateTempDir('codex-check-');
+	try {
+		const checkPathsFile = path.join(checkDir, 'paths.bin');
+		const checkOutFile = path.join(checkDir, 'out.txt');
+		// NUL 区切りの UTF-8（BOM なし）。標準入出力を通さず、ファイルで渡す
+		fs.writeFileSync(checkPathsFile, Buffer.from(paths.join('\0'), 'utf8'));
+		const nodeArgs = [configModule, 'check'];
+		for (const root of checkRoots) nodeArgs.push('--root', root);
+		nodeArgs.push('--paths-file', checkPathsFile, '--out', checkOutFile);
+		const r = spawnSync(process.execPath, nodeArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
+		// 頭の U+FEFF は外さずに読む（1行目は当たったパスのことがあり、パスが U+FEFF で始まると照合が外れるため）
+		return { code: r.status === null ? 1 : r.status, out: isFile(checkOutFile) ? fs.readFileSync(checkOutFile, 'utf8') : '' };
+	} finally {
+		fs.rmSync(checkDir, { recursive: true, force: true });
+	}
+}
+
+// ---- コンテナの中のレビュー（-Container。#99） ----
+// 流れと、その理由は docs/tasks/codex-container/plan.md。番号は計画の「流れ」の番号。
+
+const IMAGE_NAME = 'ai-team-codex';
+const LOGIN_VOLUME = 'ai-team-codex-home';
+const LABEL = 'ai-team-codex=1';
+// 健さんの AGENTS.md に、コンテナのレビューの決まりが入っているかの印（repo-files/codex/AGENTS.md の節の頭）
+const AGENTS_MARK = '<!-- ai-team: container-review v1 -->';
+// 健さんのコンテナで打つ、決まった文字列のコマンド。リポジトリから来るものは入れない（config.toml の値は "$@" で渡す）。
+// 頭で、準備のコンテナが /work/repo をリンクにすり替えていないかを確かめ、すり替えていれば 97 で終わる
+const REVIEW_SCRIPT = '[ -d /work/repo ] && [ ! -L /work/repo ] || exit 97; exec codex exec --ephemeral --color never --skip-git-repo-check -s workspace-write -C /work/repo -o /review/out/last-message.md "$@" - < /review/prompt.md';
+const SWAPPED_REPO = 97;
+// 名前に入っていたら止める文字（制御文字・U+2028・U+2029）
+const BAD_NAME = /[\u0000-\u001f\u007f\u2028\u2029]/;
+
+// docker を PATH から絶対パスで探す（Windows は、名前だけで起動するとカレントディレクトリの docker.exe を先に拾うため）。無ければ null
+function findDocker() {
+	const name = isWindows ? 'docker.exe' : 'docker';
+	for (const dir of (process.env.PATH || '').split(path.delimiter).filter((d) => d.trim() !== '' && path.isAbsolute(d))) {
+		const bin = path.join(dir, name);
+		if (isWindows ? isFile(bin) : isExecutable(bin)) return bin;
+	}
+	return null;
+}
+
+// docker の呼び方。テストは run() の deps.docker で偽物に差し替える（環境変数などの、リポジトリの設定から差し込める口は作らない）
+function realDocker(args, opts = {}) {
+	const bin = findDocker();
+	if (bin === null) stopWrapper('docker が見つかりません。Docker Desktop（か Docker Engine）を入れて起動してください（devcontainer の中では、Docker が使えなければ -Container は使えません）。');
+	return spawnSync(bin, args, { maxBuffer: 64 * 1024 * 1024, ...opts });
+}
+
+function codexHome() {
+	return (process.env.CODEX_HOME || '').trim() === '' ? path.join(os.homedir(), '.codex') : process.env.CODEX_HOME;
+}
+
+// config.toml の最上位（最初の [表] より前）の model・model_reasoning_effort を、-c の値として返す
+function modelOverrides() {
+	const file = path.join(codexHome(), 'config.toml');
+	if (!isFile(file)) return [];
+	const out = [];
+	for (const line of readUtf8(file).split(/\r?\n/)) {
+		if (/^\s*\[/.test(line)) break;
+		const m = line.match(/^\s*(model|model_reasoning_effort)\s*=\s*"([^"\\]*)"\s*(#.*)?$/);
+		if (m) out.push('-c', `${m[1]}=${JSON.stringify(m[2])}`);
+	}
+	return out;
+}
+
+// docker を包む。向き先（--context）を固定し、見つからないときは止める
+function makeDocker(deps) {
+	const call = deps.docker || realDocker;
+	let ctxArgs = [];
+	const run = (args, opts = {}) => {
+		const r = call([...ctxArgs, ...args], opts);
+		if (r.error && r.error.code === 'ENOENT') stopWrapper('docker が見つかりません。Docker Desktop（か Docker Engine）を入れて起動してください（devcontainer の中では、Docker が使えなければ -Container は使えません）。');
+		return { code: r.status === null ? 1 : r.status, stdout: r.stdout ? r.stdout.toString('utf8') : '' };
+	};
+	return {
+		run,
+		setContext(args) {
+			ctxArgs = args;
+		},
+		// 出力を一時ファイルに流し、失敗したときだけ末尾 20 行を出す（codex の進み具合や npm ci の出力を溜めないため）
+		logged(args, logFile, label) {
+			const fd = fs.openSync(logFile, 'w', 0o600);
+			let r;
+			try {
+				r = run(args, { stdio: ['ignore', fd, fd] });
+			} finally {
+				fs.closeSync(fd);
+			}
+			if (r.code !== 0 && r.code !== SWAPPED_REPO) {
+				process.stderr.write(`invoke-codex: ${label}が終了コード ${r.code} で終わりました。最後の出力:\n`);
+				const log = fs.readFileSync(logFile, 'utf8').split(/\r?\n/).filter((l, i, all) => !(i === all.length - 1 && l === ''));
+				for (const line of log.slice(-20)) process.stderr.write(`  ${line}\n`);
+			}
+			return r.code;
+		},
+	};
+}
+
+// 2. この PC の codex の版と、AGENTS.md（印の行）を確かめる
+function checkCodexForContainer(codex) {
+	const v = spawnSync(codex.command, [...codex.prefix, '--version'], { encoding: 'utf8' });
+	const m = (v.stdout || '').match(/(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)/);
+	if (v.status !== 0 || !m) stopWrapper('codex の版が分かりません（codex --version が失敗しました）。');
+	// イメージのタグに使えない文字（+ など）を含む版は扱わない
+	if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(m[1])) stopWrapper(`codex の版（${m[1]}）は、イメージのタグに使えない文字を含むので、-Container を使いません。`);
+	const agents = path.join(codexHome(), 'AGENTS.md');
+	if (!isFile(agents)) stopWrapper(`健さんの決まり（${agents}）がありません。README の「PC ごとに1回」のとおりに置いてください。`);
+	if (!readUtf8(agents).includes(AGENTS_MARK)) {
+		stopWrapper(`健さんの決まり（${agents}）に、コンテナの中のレビューの節（${AGENTS_MARK} の行で始まる節）がありません。README のとおりに、テンプレートからその節を写してください。`);
+	}
+	return { version: m[1], agents };
+}
+
+// 7〜9. docker の向き先・イメージ・ログインを確かめる。返り値はイメージの名前
+function prepareDocker(docker, version, workDir) {
+	if ((process.env.DOCKER_CONTEXT || '') !== '') stopWrapper('DOCKER_CONTEXT があるときは -Container を使いません（向き先の決まり方が分かれるため）。消してから呼んでください。');
+	// この PC を指す形だけ。unix:// はソケットのファイル。npipe はホストが「.」のときだけ（npipe:////<別の PC>/pipe/… は別の PC を指すため）
+	const local = (h) => /^unix:\/\//.test(h) || /^npipe:(\/\/|\\\\)[\\/]{2}\.[\\/]pipe[\\/]/i.test(h);
+	const host = process.env.DOCKER_HOST || '';
+	if (host !== '') {
+		if (!local(host)) stopWrapper(`DOCKER_HOST（${host}）がこの PC を指していません。作業ツリーとログインを別のマシンに送らないよう、-Container を使いません。`);
+	} else {
+		const show = docker.run(['context', 'show']);
+		const name = show.stdout.trim();
+		if (show.code !== 0 || name === '') stopWrapper('docker の context が分かりません（docker context show が失敗しました）。');
+		const inspect = docker.run(['context', 'inspect', name, '--format', '{{.Endpoints.docker.Host}}']);
+		if (inspect.code !== 0 || !local(inspect.stdout.trim())) {
+			stopWrapper(`docker の向き先（context ${name}: ${inspect.stdout.trim()}）がこの PC ではありません。作業ツリーとログインを別のマシンに送らないよう、-Container を使いません。`);
+		}
+		// 以後の docker は全部この context に固定する（途中で既定の context が変わっても、向き先を変えない）
+		docker.setContext(['--context', name]);
+	}
+	if (docker.run(['info', '--format', '{{.ServerVersion}}']).code !== 0) stopWrapper('Docker が動いていません（docker info が失敗しました）。Docker Desktop を起動してから呼んでください。');
+
+	const image = `${IMAGE_NAME}:${version}`;
+	if (docker.run(['image', 'inspect', image]).code !== 0) {
+		// build のコンテキストは、プラグインの中のこのフォルダだけ（対象のリポジトリを渡さない）
+		const context = path.resolve(here, '..', 'container');
+		const code = docker.logged(['build', '-t', image, '--build-arg', `CODEX_VERSION=${version}`, context], path.join(workDir, 'docker-build.log'), 'イメージの作成（docker build）');
+		if (code !== 0) stopWrapper(`イメージ ${image} を作れませんでした（npm に @openai/codex@${version} が無いかもしれません）。`);
+		// ほかの版のイメージを消す。消せなければ（強制終了で残ったコンテナが使っているなど）、続けて知らせる
+		const list = docker.run(['image', 'ls', IMAGE_NAME, '--format', '{{.Repository}}:{{.Tag}}']);
+		for (const old of list.stdout.split(/\r?\n/).map((s) => s.trim()).filter((s) => s !== '' && s !== image)) {
+			if (docker.run(['image', 'rm', old]).code !== 0) process.stderr.write(`invoke-codex: 前の版のイメージ ${old} を消せませんでした。残ったコンテナを消してから docker image rm ${old} で消してください。\n`);
+		}
+	}
+
+	if (docker.run(['run', '--rm', '--label', LABEL, '-v', `${LOGIN_VOLUME}:/root/.codex`, image, 'codex', 'login', 'status']).code !== 0) {
+		stopWrapper(`コンテナ用のログインがありません。README の「コンテナでのレビュー」のとおりに、ChatGPT の設定でデバイスコードのサインインを一時的にオンにしてから、次を打ってログインしてください:\n  docker run --rm -it -v ${LOGIN_VOLUME}:/root/.codex ${image} codex login --device-auth`);
+	}
+	return image;
+}
+
+// 4〜6. 送るものを決め、名前で確かめてから写す。返り値は未追跡のファイルの一覧
+function makeSnapshot(top, compare, workDir, configModule, checkRoots) {
+	// 4. 差分：パスの一覧（raw）と差分を、1回の git で一緒に作る
+	const diff = gitRaw(['-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false',
+		'diff', '--patch-with-raw', '-z', '--no-ext-diff', '--no-color', '--no-textconv', '--no-renames', '--submodule=short',
+		'--src-prefix=a/', '--dst-prefix=b/', compare, '--'], top);
+	if (diff.code !== 0) stopWrapper(`git diff が失敗しました: ${top}`);
+	const diffPaths = [];
+	const buf = diff.stdout;
+	let pos = 0;
+	// 頭は「:<メタ>\0<パス>\0」の並び。尽きたところに空の項目（\0）が1つあり、その次からが差分
+	while (pos < buf.length && buf[pos] === 0x3a) {
+		const metaEnd = buf.indexOf(0, pos);
+		const pathEnd = metaEnd < 0 ? -1 : buf.indexOf(0, metaEnd + 1);
+		if (pathEnd < 0) stopWrapper('git diff の出力を読めませんでした。');
+		diffPaths.push(buf.subarray(metaEnd + 1, pathEnd).toString('utf8'));
+		pos = pathEnd + 1;
+	}
+	if (pos < buf.length && buf[pos] === 0) pos++;
+	const patch = buf.subarray(pos);
+
+	// 写す候補：追跡しているものと、無視されていない未追跡のもの
+	const tracked = git(['ls-files', '-z', '-c'], top);
+	const others = git(['ls-files', '-z', '-o', '--exclude-standard'], top);
+	const staged = git(['ls-files', '-z', '-s'], top);
+	if (tracked.code !== 0 || others.code !== 0 || staged.code !== 0) stopWrapper(`git ls-files が失敗しました: ${top}`);
+	const untracked = others.stdout.split('\0').filter((p) => p !== '');
+	const candidates = [...new Set([...tracked.stdout.split('\0'), ...untracked].filter((p) => p !== ''))].filter((rel) => {
+		// 消したファイルは写さない（壊れたシンボリックリンクはディスクにあるので残し、下でリンクとして止める）。
+		// 追跡しているファイルがふつうのフォルダに置き換わっていれば、その名前は写さない（中身は未追跡として別に出る）。
+		// / で終わる項目（未追跡の入れ子のリポジトリ）は、下で止めるために残す
+		try {
+			const st = fs.lstatSync(path.join(top, rel));
+			return !(st.isDirectory() && !rel.endsWith('/'));
+		} catch {
+			return false;
+		}
+	});
+
+	// 5. 名前で確かめる（D10・D13。中身はまだ写していない）。どのパスかは手元にだけ出す
+	const stop = (why, list) => stopWrapper(`${why}ので、-Container を使いません: ${list.slice(0, 10).join(', ')}${list.length > 10 ? ` ほか ${list.length - 10} 件` : ''}`);
+	const badNames = [...candidates, ...diffPaths].filter((p) => BAD_NAME.test(p));
+	if (badNames.length > 0) stop('名前に制御文字（改行など）を含むファイルがある', badNames.map((p) => JSON.stringify(p)));
+	const gitlinks = staged.stdout.split('\0').filter((e) => e.startsWith('160000 ')).map((e) => e.slice(e.indexOf('\t') + 1));
+	if (gitlinks.length > 0 || candidates.includes('.gitmodules')) stop('サブモジュールがある', gitlinks.length > 0 ? gitlinks : ['.gitmodules']);
+	const nested = candidates.filter((p) => p.endsWith('/'));
+	if (nested.length > 0) stop('未追跡の入れ子のリポジトリがある（中のファイルを照らせない）', nested);
+	// 秘密情報：差分に入っていれば止める（中身が健さんに渡るため）。差分に入っていないもの（変更していない wp-config.php・.env.example など）は、
+	// 写さないだけにする（D13）。当たったパスは共有モジュールが改行区切りで返す。名前に改行などを含むファイルは上で止めているので、割れない
+	const check = runConfigCheck(configModule, checkRoots, [...candidates, ...diffPaths]);
+	let secrets = new Set();
+	if (check.code === 3) {
+		secrets = new Set(check.out.split('\n').filter((s) => s !== ''));
+		const inDiff = [...new Set(diffPaths.filter((p) => secrets.has(p)))];
+		if (inDiff.length > 0) stop('差分（健さんに渡る変更）に秘密情報のファイルがある', inDiff);
+	} else if (check.code === 2) {
+		stopWrapper(`設定ファイル（.claude/ai-team.json）が壊れているので、健さんを呼びません: ${check.out}`);
+	} else if (check.code !== 0 || check.out.split('\n')[0].trim() !== 'ai-team-config: ok') {
+		stopWrapper('秘密情報の確かめが済んだか分からないので、健さんを呼びません。');
+	}
+	const toCopy = candidates.filter((p) => !secrets.has(p));
+	// リンク：根の実体を基準に、候補の実体が「根の実体＋相対パス」と違えば止める（根より上のリンクと、根の綴りの大小は比べない）
+	const realTop = fs.realpathSync.native(top);
+	const links = toCopy.filter((rel) => {
+		const full = path.join(top, rel);
+		try {
+			if (fs.lstatSync(full).isSymbolicLink()) return true;
+			return !sameLocation(fs.realpathSync.native(full), path.join(realTop, rel));
+		} catch {
+			return true;
+		}
+	});
+	if (links.length > 0) stop('リンク（シンボリックリンク・ジャンクション）か、綴りの大文字小文字が索引とディスクで違うファイルがある', links);
+
+	// 6. 写す。写す直前にもう一度、リンクに変わっていないかを見る
+	const repoDir = path.join(workDir, 'repo');
+	fs.mkdirSync(repoDir);
+	for (const rel of toCopy) {
+		const full = path.join(top, rel);
+		if (fs.lstatSync(full).isSymbolicLink()) stop('写す途中でリンクに変わったファイルがある', [rel]);
+		const dest = path.join(repoDir, rel);
+		fs.mkdirSync(path.dirname(dest), { recursive: true });
+		fs.copyFileSync(full, dest);
+	}
+	const reviewDir = path.join(workDir, 'review');
+	fs.mkdirSync(path.join(reviewDir, 'out'), { recursive: true });
+	fs.writeFileSync(path.join(reviewDir, 'review.diff'), patch);
+	// 頼みの文に載せる未追跡のファイルも、写したものだけ（写さなかった秘密情報の名前は送らない）
+	return untracked.filter((p) => toCopy.includes(p));
+}
+
+// 13. 頼みの文（ラッパーが組み立てる）
+function buildContainerPrompt(container, untracked) {
+	return [
+		'ガネーシャから（コンテナの中のレビュー）',
+		'',
+		'次の変更をレビューしてください。',
+		'',
+		'- 見る差分：/review/review.diff',
+		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください）',
+		'- 写していないのは、秘密情報の決まりに当たるファイル（`.env*`・`.dev.vars`・`.kv/` の下・`wp-config.php` と、`.claude/ai-team.json` の `secretPatterns` に当たるもの）と、.gitignore で無視されている未追跡のファイルです。テストが秘密情報の決まりに当たるファイルを読もうとして落ちたときに限り、変更の不具合ではないので、指摘にせず、そう書き添えてください。ほかのファイルが無くて落ちたときは、ふつうに指摘してください',
+		`- テスト：作業ツリーで \`${container.test}\` を打ち、その結果も根拠にしてください（準備のコマンド \`${container.setup}\` は打ってあります）`,
+		'- 作業ツリーのファイルを書き換えないでください（テストが作るキャッシュや一時ファイルは除く）',
+		'- 指摘は、/work/repo からの相対パスのファイル:行と、重要度（必須／推奨／表記）を付けて書いてください',
+		'',
+		untracked.length === 0 ? '未追跡のファイル（差分には入っていない新しいファイル）：なし' : `未追跡のファイル（差分には入っていない新しいファイル。中身は作業ツリーにあります）：\n${untracked.map((p) => `- ${p}`).join('\n')}`,
+		'',
+	].join('\n');
+}
+
+// 10〜14. コンテナで健さんを動かす。返り値は終了コード
+function reviewInContainer({ docker, image, workDir, container, agents, state }) {
+	// 10. 作業用のボリューム
+	const volume = `${IMAGE_NAME}-work-${path.basename(workDir).replace(/[^A-Za-z0-9]/g, '').toLowerCase()}`;
+	if (docker.run(['volume', 'create', '--label', LABEL, volume]).code !== 0) stopWrapper('作業用のボリュームを作れませんでした。');
+	state.volumes.push(volume);
+
+	// 11. 準備のコンテナ（ログインのボリュームは付けない。ネットワークあり）
+	const prep = docker.run(['create', '--rm', '--label', LABEL, '-w', '/work/repo', '-v', `${volume}:/work`, image, 'sh', '-c', container.setup]);
+	if (prep.code !== 0 || prep.stdout.trim() === '') stopWrapper('準備のコンテナを作れませんでした。');
+	const prepId = prep.stdout.trim();
+	state.containers.push(prepId);
+	if (docker.run(['cp', `${path.join(workDir, 'repo')}${path.sep}.`, `${prepId}:/work/repo`]).code !== 0) stopWrapper('作業ツリーをコンテナに写せませんでした。');
+	// --rm なので、終われば消えている。途中で切れたときのために、後始末の一覧には残す（消えていれば後始末は黙って飛ばす）
+	const setupCode = docker.logged(['start', '-a', prepId], path.join(workDir, 'setup.log'), '準備のコマンド（container.setup）');
+	if (setupCode !== 0) stopWrapper(`準備のコマンド（container.setup）が失敗しました（終了コード ${setupCode}）。`);
+
+	// 12. 健さんのコンテナ
+	const ken = docker.run(['create', '--label', LABEL, '--security-opt', 'seccomp=unconfined', '-w', '/work/repo', '-e', 'TMPDIR=/tmp',
+		'-v', `${volume}:/work`, '-v', `${LOGIN_VOLUME}:/root/.codex`, image, 'sh', '-c', REVIEW_SCRIPT, 'sh', ...modelOverrides()]);
+	if (ken.code !== 0 || ken.stdout.trim() === '') stopWrapper('健さんのコンテナを作れませんでした。');
+	const kenId = ken.stdout.trim();
+	state.containers.push(kenId);
+	if (docker.run(['cp', agents, `${kenId}:/root/.codex/AGENTS.md`]).code !== 0) stopWrapper('健さんの決まりをコンテナに写せませんでした。');
+	// /review は健さんのコンテナだけの場所（準備と共有するボリュームの外）
+	if (docker.run(['cp', path.join(workDir, 'review'), `${kenId}:/review`]).code !== 0) stopWrapper('差分と頼みの文をコンテナに写せませんでした。');
+	const code = docker.logged(['start', '-a', kenId], path.join(workDir, 'codex-output.log'), 'コンテナの中の codex');
+	if (code === SWAPPED_REPO) stopWrapper('準備のコマンドが作業ツリー（/work/repo）をリンクにすり替えていたので、健さんを起こしませんでした。');
+
+	// 14. 返事を取り出す
+	const lastMessage = path.join(workDir, 'last-message.md');
+	docker.run(['cp', `${kenId}:/review/out/last-message.md`, lastMessage]);
+	// docker cp はリンクをリンクのまま写すので、ふつうのファイルのときだけ読む（リンク先のこの PC のファイルを読んで出さないため）
+	let regular = false;
+	try {
+		regular = fs.lstatSync(lastMessage).isFile();
+	} catch {
+		regular = false;
+	}
+	if (!regular) stopWrapper(`健さんの返事が取れませんでした（終了コード ${code}）。`, code === 0 ? 1 : code);
+	const reply = readUtf8(lastMessage);
+	process.stdout.write(reply.endsWith('\n') ? reply : `${reply}\n`);
+	return code;
+}
+
+// 15. 後始末：コンテナ → 作業用のボリューム → 一時ディレクトリの順。失敗しても続け、残ったものと消し方を出す（D11）
+function cleanupContainer(docker, state, workDir) {
+	const left = [];
+	// docker が途中で見つからなくなっても（止める例外を投げる）、残りの後始末を続ける
+	const tryRun = (args) => {
+		try {
+			return docker.run(args).code;
+		} catch {
+			return 1;
+		}
+	};
+	for (const id of state.containers) {
+		// 消せなくても、もう無ければ（--rm の準備のコンテナ）知らせない
+		if (tryRun(['rm', '-f', id]) !== 0 && tryRun(['container', 'inspect', id]) === 0) left.push(`コンテナ ${id}（docker rm -f ${id}）`);
+	}
+	for (const v of state.volumes) {
+		if (tryRun(['volume', 'rm', v]) !== 0) left.push(`ボリューム ${v}（docker volume rm ${v}）`);
+	}
+	try {
+		fs.rmSync(workDir, { recursive: true, force: true });
+	} catch {
+		// 下で知らせる
+	}
+	if (fs.existsSync(workDir)) left.push(`一時ディレクトリ ${workDir}`);
+	if (left.length > 0) process.stderr.write(`invoke-codex: 後始末で消せなかったものがあります。手で消してください:\n${left.map((l) => `  ${l}`).join('\n')}\n`);
+}
+
+function main(cleanups, argv, deps) {
+	const opts = parseArgs(argv);
 	const mode = opts.Mode;
+	if (opts.Container) gitPrefix = ['--no-optional-locks', '-c', 'core.fsmonitor=false'];
 
 	// ---- 呼ぶ前の確認 ----
 
 	let codex = null;
-	if (mode !== 'check') {
+	if (mode !== 'check' || opts.Container) {
 		codex = findCodex();
 		if (codex === null) stopWrapper('codex が PATH にありません。npm install -g @openai/codex で入れて、codex login を打ってから呼んでください。');
 	}
@@ -211,7 +570,13 @@ function main(cleanups) {
 	const callerDirectory = process.cwd();
 	const workingDirectory = opts.WorkingDirectory.trim() === '' ? callerDirectory : opts.WorkingDirectory;
 	if (!isDirectory(workingDirectory)) stopWrapper(`作業の根が見つかりません: ${workingDirectory}`);
-	const repoRoot = path.resolve(workingDirectory);
+	let repoRoot = path.resolve(workingDirectory);
+	if (opts.Container) {
+		// 写しと差分は、-WorkingDirectory によらず、リポジトリの根から作る
+		const top = git(['rev-parse', '--show-toplevel'], repoRoot);
+		if (top.code !== 0 || top.stdout.trim() === '') stopWrapper(`-Container は Git のリポジトリでだけ使えます: ${repoRoot}`);
+		repoRoot = path.resolve(top.stdout.trim());
+	}
 
 	let prompt = '';
 	if (mode !== 'review' && mode !== 'check') {
@@ -263,23 +628,7 @@ function main(cleanups) {
 	const mainRoot = getMainRoot(repoRoot);
 	if (!sameLocation(mainRoot, repoRoot)) checkRoots.push(mainRoot);
 
-	const checkDir = makePrivateTempDir('codex-check-');
-	let checkCode = 1;
-	let checkOut = '';
-	try {
-		const checkPathsFile = path.join(checkDir, 'paths.bin');
-		const checkOutFile = path.join(checkDir, 'out.txt');
-		// NUL 区切りの UTF-8（BOM なし）。標準入出力を通さず、ファイルで渡す
-		fs.writeFileSync(checkPathsFile, Buffer.from(gitPaths.join('\0'), 'utf8'));
-		const nodeArgs = [configModule, 'check'];
-		for (const root of checkRoots) nodeArgs.push('--root', root);
-		nodeArgs.push('--paths-file', checkPathsFile, '--out', checkOutFile);
-		const r = spawnSync(process.execPath, nodeArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
-		checkCode = r.status === null ? 1 : r.status;
-		if (isFile(checkOutFile)) checkOut = readUtf8(checkOutFile);
-	} finally {
-		fs.rmSync(checkDir, { recursive: true, force: true });
-	}
+	const { code: checkCode, out: checkOut } = runConfigCheck(configModule, checkRoots, gitPaths);
 	if (checkCode === 3) {
 		const secrets = [...new Set(checkOut.split('\n').filter((s) => s !== ''))];
 		stopWrapper(`健さんに渡る変更に秘密情報のファイルがあるので、review を呼びません（未追跡・ステージ済み・書き換え・名前の変更・基準ブランチとの差分のどれも Codex に送られるため）: ${secrets.join(', ')}`);
@@ -293,6 +642,47 @@ function main(cleanups) {
 	// 終了コード 0 でも、共有モジュールが印を書いていなければ、確かめが済んだか分からない（リンク経由の起動で何もせずに終わった場合など）
 	if (checkOut.split('\n')[0].trim() !== 'ai-team-config: ok') {
 		stopWrapper('秘密情報と設定ファイルの確かめが済んだか分からないので、健さんを呼びません（共有モジュールが印を返しませんでした）。');
+	}
+
+	// ---- -Container：コンテナの中で健さんを動かす（#99） ----
+	if (opts.Container) {
+		// 1. container の設定（共有モジュールが check の出力の2行目に書く）
+		const line = checkOut.split('\n').find((l) => l.startsWith('container: '));
+		if (line === undefined) stopWrapper('このリポジトリの .claude/ai-team.json に container（setup・test）がありません。README の「コンテナでのレビュー」のとおりに書いてください。');
+		const container = JSON.parse(line.slice('container: '.length));
+		// 2. この PC の codex の版と AGENTS.md
+		const { version, agents } = checkCodexForContainer(codex);
+
+		const workDir = makePrivateTempDir('codex-');
+		const docker = makeDocker(deps);
+		const state = { containers: [], volumes: [] };
+		cleanups.push(() => cleanupContainer(docker, state, workDir));
+
+		if (mode === 'check') {
+			// 7〜9 だけ（イメージを作り、ログインを確かめる。健さんは呼ばない）
+			const image = prepareDocker(docker, version, workDir);
+			process.stdout.write(`CHECK: ok（設定ファイルを読めた。コンテナ：イメージ ${image}・ログインあり。健さんは呼んでいない）\n`);
+			return 0;
+		}
+
+		// 4〜6. 送るものを決め、名前で確かめてから写す（docker はまだ呼ばない）
+		let compare = 'HEAD';
+		if (opts.Base.trim() === '' && git(['rev-parse', '--verify', '-q', 'HEAD'], repoRoot).code !== 0) {
+			// 最初のコミットの前（HEAD が無い）は、空のツリーと比べる（リポジトリのハッシュの方式に合わせて git に作らせる）
+			const empty = spawnSync('git', [...gitPrefix, 'hash-object', '-t', 'tree', '--stdin'], { cwd: repoRoot, input: '', encoding: 'utf8' });
+			if (empty.status !== 0 || empty.stdout.trim() === '') stopWrapper('最初のコミットの前のリポジトリで、比べる先（空のツリー）を作れませんでした。');
+			compare = empty.stdout.trim();
+		} else if (opts.Base.trim() !== '') {
+			const mb = git(['merge-base', opts.Base, 'HEAD'], repoRoot);
+			if (mb.code !== 0 || mb.stdout.trim() === '') stopWrapper(`基準ブランチ ${opts.Base} との分かれ目が分かりません。`);
+			compare = mb.stdout.trim();
+		}
+		const untracked = makeSnapshot(repoRoot, compare, workDir, configModule, checkRoots);
+		fs.writeFileSync(path.join(workDir, 'review', 'prompt.md'), buildContainerPrompt(container, untracked));
+
+		// 7〜14
+		const image = prepareDocker(docker, version, workDir);
+		return reviewInContainer({ docker, image, workDir, container, agents, state });
 	}
 
 	// ---- check：ここまでの確かめだけで終わる（codex は呼ばない） ----
@@ -397,23 +787,38 @@ function main(cleanups) {
 	return exitCode;
 }
 
-const cleanups = [];
-try {
-	process.exitCode = main(cleanups);
-} catch (e) {
-	if (e instanceof Stop) {
-		process.stderr.write(`invoke-codex: ${e.message}\n`);
-		process.exitCode = e.code;
-	} else {
-		process.stderr.write(`invoke-codex: 思わぬ失敗です: ${e && e.stack ? e.stack : e}\n`);
-		process.exitCode = 1;
-	}
-} finally {
-	for (const f of cleanups) {
-		try {
-			f();
-		} catch {
-			// 後始末の失敗では止めない
+// ラッパーを動かす。deps.docker は docker の呼び方で、テストが偽物に差し替えるためだけにある（#99）
+export function run(argv, deps = {}) {
+	const cleanups = [];
+	try {
+		process.exitCode = main(cleanups, argv, deps);
+	} catch (e) {
+		if (e instanceof Stop) {
+			process.stderr.write(`invoke-codex: ${e.message}\n`);
+			process.exitCode = e.code;
+		} else {
+			process.stderr.write(`invoke-codex: 思わぬ失敗です: ${e && e.stack ? e.stack : e}\n`);
+			process.exitCode = 1;
+		}
+	} finally {
+		for (const f of cleanups) {
+			try {
+				f();
+			} catch {
+				// 後始末の失敗では止めない
+			}
 		}
 	}
 }
+
+// 直接起動されたときだけ動く（テストは import して run を呼ぶ）。リンク経由の起動でも合うよう、両方を実体にそろえて比べる
+function realOrNull(p) {
+	try {
+		return fs.realpathSync(p);
+	} catch {
+		return null;
+	}
+}
+const entry = process.argv[1] ? realOrNull(process.argv[1]) : null;
+const self = realOrNull(fileURLToPath(import.meta.url));
+if (entry !== null && self !== null && sameLocation(entry, self)) run(process.argv.slice(2));

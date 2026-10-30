@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const wrapper = path.join(here, 'invoke-codex.mjs');
@@ -37,6 +37,8 @@ fs.mkdirSync(path.dirname(fakeJs), { recursive: true });
 fs.writeFileSync(fakeJs, [
 	"const fs = require('fs');",
 	'const args = process.argv.slice(2);',
+	// -Container は、この PC の codex の版を聞く（印は書かない。健さんを呼んだことにはしない）
+	"if (args[0] === '--version') { process.stdout.write('codex-cli 0.0.1\\n'); process.exit(0); }",
 	"const i = args.indexOf('-o');",
 	"if (i >= 0 && i + 1 < args.length) fs.writeFileSync(args[i + 1], process.env.FAKE_CODEX_REPLY || 'fake reply');",
 	"fs.writeFileSync(process.env.FAKE_CODEX_MARK, ['called', ...args].join(' '));",
@@ -738,6 +740,482 @@ expectPass('設定に plannerWritable が残っていても consult が通る', 
 	write('.claude/ai-team.json', j({ secretPatterns: [], plannerWritable: [] }));
 	commitAll(git, 'init');
 }, { mode: 'consult' });
+
+// ---- codex への引数（-Container を足しても、付けないときの引数が変わらないことの基準。#99） ----
+// -o の値（ラッパーの一時ディレクトリ）と -C の値（作業の根）は呼ぶたびに違うので、置き換えてから比べる
+function expectArgs(name, mode, base, expected) {
+	try {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		if (base) {
+			ctx.git('checkout', '-q', '-b', 'feature');
+			ctx.write('a.txt', 'a\n');
+			commitAll(ctx.git, 'a');
+		}
+		const r = runWrapper(ctx, base, mode);
+		const args = JSON.parse(fs.readFileSync(`${ctx.mark}.json`, 'utf8'));
+		const o = args.indexOf('-o');
+		if (o >= 0) args[o + 1] = '<out>';
+		const c = args.indexOf('-C');
+		if (c >= 0 && path.resolve(args[c + 1]) === path.resolve(ctx.repo)) args[c + 1] = '<repo>';
+		const ok = r.code === 0 && JSON.stringify(args) === JSON.stringify(expected);
+		report(`引数: ${name}`, ok, `(code=${r.code} args=${JSON.stringify(args)})`);
+	} catch (e) {
+		report(`引数: ${name}`, false, String(e.message));
+	}
+}
+
+expectArgs('review（-Base 無し）は未コミットの変更を read-only で見る', 'review', '', ['exec', 'review', '--uncommitted', '-c', 'sandbox_mode=read-only', '-o', '<out>']);
+expectArgs('review（-Base あり）は基準ブランチとの差分を read-only で見る', 'review', 'main', ['exec', 'review', '--base', 'main', '-c', 'sandbox_mode=read-only', '-o', '<out>']);
+expectArgs('consult は read-only で作業の根を読む', 'consult', '', ['exec', '--ephemeral', '--color', 'never', '--skip-git-repo-check', '-s', 'read-only', '-C', '<repo>', '-o', '<out>']);
+
+// ---- コンテナの中のレビュー（-Container。#99）。docker は偽物（本物の Docker も健さんも呼ばない） ----
+// 偽物の docker は、テストの一時ディレクトリに作る入口（container-entry.mjs）がラッパーを import して、run() に渡す。
+// 受け取った引数を FAKE_DOCKER_LOG に、docker cp でコンテナに写したものを FAKE_DOCKER_CP の下に残す。
+// 動きは FAKE_DOCKER_* で変える（テストの入口だけが読む。ラッパーは読まない）
+const containerEntry = path.join(root, 'container-entry.mjs');
+fs.writeFileSync(containerEntry, `
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { run } from ${JSON.stringify(pathToFileURL(wrapper).href)};
+const env = process.env;
+const calls = [];
+const created = {};
+let n = 0;
+const ok = (s = '') => ({ status: 0, stdout: Buffer.from(s) });
+const fail = () => ({ status: 1, stdout: Buffer.alloc(0) });
+function fake(args, opts = {}) {
+	calls.push(args);
+	fs.writeFileSync(env.FAKE_DOCKER_LOG, JSON.stringify(calls));
+	const a = args[0] === '--context' ? args.slice(2) : args;
+	if (opts.stdio && typeof opts.stdio[1] === 'number') fs.writeSync(opts.stdio[1], 'progress\\n');
+	switch (a[0]) {
+		case 'context':
+			return a[1] === 'show' ? ok('desktop-linux\\n') : ok((env.FAKE_DOCKER_ENDPOINT || 'npipe:////./pipe/fake') + '\\n');
+		case 'info':
+			if (env.FAKE_ON_INFO) {
+				fs.writeFileSync(path.join(process.cwd(), '.dev.vars'), 'S=1\\n');
+				spawnSync('git', ['add', '.dev.vars'], { cwd: process.cwd() });
+			}
+			return env.FAKE_DOCKER_INFO_FAIL ? fail() : ok('27.0\\n');
+		case 'image':
+			if (a[1] === 'inspect') return env.FAKE_DOCKER_NO_IMAGE ? fail() : ok('[]');
+			if (a[1] === 'ls') return ok('ai-team-codex:0.0.1\\nai-team-codex:0.0.0\\n');
+			return ok();
+		case 'build':
+			return ok();
+		case 'run':
+			return env.FAKE_DOCKER_NO_LOGIN ? fail() : ok('Logged in\\n');
+		case 'volume':
+			return a[1] === 'rm' && env.FAKE_DOCKER_RM_FAIL ? fail() : ok(a[a.length - 1] + '\\n');
+		case 'create':
+			n++;
+			created['c' + n] = a;
+			return ok('c' + n + '\\n');
+		case 'cp': {
+			const [src, dst] = a.slice(1);
+			if (/^c\\d+:/.test(src)) {
+				if (env.FAKE_DOCKER_NO_REPLY) return fail();
+				fs.writeFileSync(dst, env.FAKE_CODEX_REPLY || 'fake container reply');
+				return ok();
+			}
+			// FAKE_DOCKER_CP_FAIL=prep（準備のコンテナへ）・ken（健さんのコンテナへ）で、写すのを失敗させる
+			const toKen = created[dst.split(':')[0]].includes('seccomp=unconfined');
+			if (env.FAKE_DOCKER_CP_FAIL === (toKen ? 'ken' : 'prep')) return fail();
+			const target = path.join(env.FAKE_DOCKER_CP, dst.replace(/[:/]/g, '_'));
+			fs.cpSync(src.replace(/[\\\\/]\\.$/, ''), target, { recursive: true });
+			return ok();
+		}
+		case 'container':
+			// 健さんのコンテナ（--rm なし）はまだある。準備のコンテナ（--rm）は終わって消えている
+			return created[a[a.length - 1]] && !created[a[a.length - 1]].includes('--rm') ? ok('[]') : fail();
+		case 'start': {
+			const isKen = created[a[a.length - 1]].includes('seccomp=unconfined');
+			if (!isKen) return env.FAKE_DOCKER_SETUP_FAIL ? fail() : ok();
+			return env.FAKE_DOCKER_START_CODE ? { status: Number(env.FAKE_DOCKER_START_CODE), stdout: Buffer.alloc(0) } : ok();
+		}
+		case 'rm':
+			return env.FAKE_DOCKER_RM_FAIL ? fail() : ok();
+	}
+	return fail();
+}
+run(process.argv.slice(2), { docker: fake });
+`);
+
+// 健さんの決まり（AGENTS.md）。印の行あり・なしの2つ
+const codexHomeOk = path.join(root, 'codex-home-ok');
+const codexHomeOld = path.join(root, 'codex-home-old');
+fs.mkdirSync(codexHomeOk);
+fs.mkdirSync(codexHomeOld);
+fs.writeFileSync(path.join(codexHomeOk, 'AGENTS.md'), '# 健さん\n\n<!-- ai-team: container-review v1 -->\n## コンテナの中のレビュー\n');
+fs.writeFileSync(path.join(codexHomeOld, 'AGENTS.md'), '# 健さん\n');
+const containerConfig = j({ secretPatterns: [], container: { setup: 'npm ci', test: 'npm test' } });
+
+function makeContainerRepo() {
+	const ctx = makeRepo();
+	ctx.write('.claude/ai-team.json', containerConfig);
+	ctx.write('package.json', '{"name":"x"}\n');
+	commitAll(ctx.git, 'init');
+	return ctx;
+}
+
+// -Container で呼ぶ。返り値は終了コード・出力・偽物の docker が受けた引数（calls）・写したもの（cpDir）
+function runContainer(ctx, { args = ['-Mode', 'review', '-Container'], extraEnv = {}, workDir = ctx.repo } = {}) {
+	const cpDir = path.join(root, `cp-${caseNo}`);
+	const log = path.join(root, `docker-${caseNo}.json`);
+	fs.mkdirSync(cpDir, { recursive: true });
+	// 利用者の DOCKER_HOST・DOCKER_CONTEXT は引き継がない（渡したいときは extraEnv で渡す）
+	const env = { ...ctx.env };
+	delete env.DOCKER_HOST;
+	delete env.DOCKER_CONTEXT;
+	Object.assign(env, { CODEX_HOME: codexHomeOk, FAKE_DOCKER_LOG: log, FAKE_DOCKER_CP: cpDir, ...extraEnv });
+	const r = spawnSync(process.execPath, [containerEntry, ...args, '-WorkingDirectory', workDir], { cwd: ctx.repo, env, encoding: 'utf8' });
+	const calls = fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, 'utf8')) : [];
+	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', calls, cpDir, called: fs.existsSync(ctx.mark) };
+}
+// 写したファイルの一覧（cpDir の下の相対パス）
+function listCopied(cpDir) {
+	const out = [];
+	const walk = (d, rel) => {
+		for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+			const r = rel === '' ? e.name : `${rel}/${e.name}`;
+			if (e.isDirectory()) walk(path.join(d, e.name), r);
+			else out.push(r);
+		}
+	};
+	if (fs.existsSync(cpDir)) walk(cpDir, '');
+	return out.sort();
+}
+const verb = (calls, v) => calls.filter((c) => (c[0] === '--context' ? c[2] : c[0]) === v);
+const detail = (r) => `(code=${r.code} stderr=${r.stderr.trim().slice(0, 300)} calls=${JSON.stringify(r.calls.map((c) => c.slice(0, 4))).slice(0, 300)})`;
+
+function containerCase(name, fn) {
+	try {
+		const [ok, info] = fn();
+		report(`コンテナ: ${name}`, ok, info);
+	} catch (e) {
+		report(`コンテナ: ${name}`, false, String(e.message));
+	}
+}
+
+containerCase('通る：準備と健さんのコンテナの形・写したもの・差分・頼みの文・返事・後始末', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('gone.txt', 'gone\n');
+	ctx.write('.gitignore', 'ignored.log\n');
+	commitAll(ctx.git, 'more');
+	ctx.write('README.md', 'changed\n');
+	ctx.write('docs/新しい ファイル.md', 'new\n');
+	ctx.write('ignored.log', 'ignored\n');
+	fs.rmSync(path.join(ctx.repo, 'gone.txt'));
+	const tempBefore = listTemp();
+	const r = runContainer(ctx);
+	const creates = verb(r.calls, 'create');
+	// -v の値は、名前付きボリュームだけ（この PC のパスを bind mount しない）
+	const mounts = creates.flatMap((c) => c.flatMap((x, i) => (c[i - 1] === '-v' ? [x.split(':')[0]] : [])));
+	const prep = creates[0] || [];
+	const ken = creates[1] || [];
+	const copied = listCopied(r.cpDir);
+	const diffFile = copied.find((p) => p.endsWith('/review.diff'));
+	const promptFile2 = copied.find((p) => p.endsWith('/prompt.md'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	const promptText = promptFile2 ? fs.readFileSync(path.join(r.cpDir, promptFile2), 'utf8') : '';
+	const afterInfo = r.calls.slice(r.calls.findIndex((c) => c.includes('info')));
+	const ok = r.code === 0
+		&& /^fake container reply\s*$/m.test(r.stdout)
+		&& !r.called
+		&& prep.includes('--rm') && prep.includes('-w') && prep.includes('/work/repo') && !prep.some((x) => String(x).includes('ai-team-codex-home'))
+		&& ken.includes('seccomp=unconfined') && ken.includes('/work/repo') && ken.some((x) => String(x) === 'ai-team-codex-home:/root/.codex') && !ken.includes('--rm')
+		&& [...prep, ...ken].filter((x) => x === 'ai-team-codex=1').length === 2
+		&& ![...prep, ...ken].some((x) => String(x).includes(ctx.repo))
+		&& mounts.length === 3 && mounts.every((m) => /^ai-team-codex-[a-z0-9-]+$/.test(m))
+		&& copied.includes('c1__work_repo/package.json') && copied.includes('c1__work_repo/docs/新しい ファイル.md') && copied.includes('c1__work_repo/.claude/ai-team.json')
+		&& !copied.some((p) => p.endsWith('/ignored.log') || p.endsWith('/gone.txt'))
+		&& diffText.startsWith('diff --git a/README.md b/README.md') && diffText.includes('+changed')
+		&& promptText.startsWith('ガネーシャから（コンテナの中のレビュー）') && promptText.includes('`npm test`') && promptText.includes('- docs/新しい ファイル.md')
+		&& afterInfo.every((c) => c[0] === '--context')
+		&& verb(r.calls, 'rm').some((c) => c.includes('c2')) && verb(r.calls, 'volume').some((c) => c.includes('rm'))
+		&& listTemp() === tempBefore;
+	return [ok, `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+for (const [name, setup, word, extraEnv] of [
+	// 書き換えた秘密情報は、1 の確かめ（今の review と同じ）で止まる。D13 の差分の判定は、その後ろの二重の守り
+	['変更に秘密情報（追跡している wp-config.php を書き換えた。1 の確かめで止まる）',(c) => { c.write('wp-config.php', '<?php // a\n'); commitAll(c.git, 'wp'); c.write('wp-config.php', '<?php // b\n'); }, '秘密情報'],
+	['サブモジュール（gitlink）', (c) => { c.git('update-index', '--add', '--cacheinfo', `160000,${c.git('rev-parse', 'HEAD').trim()},sub`); }, 'サブモジュール'],
+	['未追跡の入れ子のリポジトリ', (c) => { c.write('nested/a.txt', 'a\n'); gitIn(path.join(c.repo, 'nested'), c.env, 'init', '-q'); }, '入れ子'],
+	['container の設定が無い', (c) => { c.write('.claude/ai-team.json', j({ secretPatterns: [] })); commitAll(c.git, 'no container'); }, 'container'],
+	['AGENTS.md に印の行が無い', () => {}, 'コンテナの中のレビューの節', { CODEX_HOME: codexHomeOld }],
+	['DOCKER_CONTEXT がある', () => {}, 'DOCKER_CONTEXT', { DOCKER_CONTEXT: 'remote' }],
+	['DOCKER_HOST がこの PC でない', () => {}, 'DOCKER_HOST', { DOCKER_HOST: 'tcp://10.0.0.1:2375' }],
+]) {
+	containerCase(`止まる（docker を呼ばない）：${name}`, () => {
+		const ctx = makeContainerRepo();
+		setup(ctx);
+		const r = runContainer(ctx, { extraEnv });
+		return [r.code !== 0 && r.stderr.includes(word) && r.calls.length === 0 && listCopied(r.cpDir).length === 0, detail(r)];
+	});
+}
+
+if (!isWindows) {
+	containerCase('止まる（docker を呼ばない）：名前に改行を含むファイル', () => {
+		const ctx = makeContainerRepo();
+		ctx.write('a\nb.txt', 'x\n');
+		const r = runContainer(ctx);
+		return [r.code !== 0 && r.stderr.includes('制御文字') && r.calls.length === 0, detail(r)];
+	});
+	containerCase('止まる（docker を呼ばない）：壊れたシンボリックリンク', () => {
+		const ctx = makeContainerRepo();
+		fs.symlinkSync(path.join(root, 'no-such-target'), path.join(ctx.repo, 'broken'));
+		const r = runContainer(ctx);
+		return [r.code !== 0 && r.stderr.includes('リンク') && r.calls.length === 0, detail(r)];
+	});
+}
+
+containerCase('通る：変更していない秘密情報（wp-config.php・.env.example・secretPatterns）は止めずに写さず、名前も頼みの文に入れない（D13）', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('.claude/ai-team.json', j({ secretPatterns: ['private/**'], container: { setup: 'npm ci', test: 'npm test' } }));
+	ctx.write('wp-config.php', '<?php\n');
+	ctx.write('.env.example', 'KEY=\n');
+	ctx.write('private/token.json', '{}\n');
+	commitAll(ctx.git, 'secrets');
+	ctx.write('README.md', 'changed\n');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	const promptFile2 = copied.find((p) => p.endsWith('/prompt.md'));
+	const promptText = promptFile2 ? fs.readFileSync(path.join(r.cpDir, promptFile2), 'utf8') : '';
+	const ok = r.code === 0
+		&& copied.includes('c1__work_repo/package.json')
+		&& !copied.some((p) => p.endsWith('/wp-config.php') || p.endsWith('/.env.example') || p.includes('/private/'))
+		// 頼みの文には決まりとして wp-config.php の名前が入るので、このリポジトリだけにある名前で見る
+		&& promptText.includes('ガネーシャから') && !/\.env\.example|private\/token\.json/.test(promptText);
+	return [ok, `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+containerCase('通る：名前が U+FEFF で始まる秘密情報も、写さない（共有モジュールの出力の1行目でも照合が外れない）', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('.claude/ai-team.json', j({ secretPatterns: ['**/token.json'], container: { setup: 'npm ci', test: 'npm test' } }));
+	ctx.write('﻿k/token.json', '{}\n');
+	commitAll(ctx.git, 'bom');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	return [r.code === 0 && copied.includes('c1__work_repo/package.json') && !copied.some((p) => p.endsWith('/token.json')), `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+containerCase('通る：追跡しているファイルがフォルダに置き換わっていても（foo を消して foo/index.js を作った）、止まらずに中身を写す', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('foo', 'file\n');
+	commitAll(ctx.git, 'foo');
+	fs.rmSync(path.join(ctx.repo, 'foo'));
+	ctx.write('foo/index.js', 'dir\n');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	return [r.code === 0 && copied.includes('c1__work_repo/foo/index.js'), `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+containerCase('通る：最初のコミットの前（HEAD が無い）でも、空のツリーと比べて差分を作る', () => {
+	const ctx = makeRepo();
+	ctx.write('.claude/ai-team.json', containerConfig);
+	ctx.write('package.json', '{"name":"x"}\n');
+	ctx.git('add', 'package.json', '.claude/ai-team.json');
+	ctx.write('untracked.txt', 'u\n');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	const diffFile = copied.find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [r.code === 0 && diffText.includes('diff --git a/package.json b/package.json') && copied.includes('c1__work_repo/untracked.txt'), detail(r)];
+});
+
+containerCase('通る：DOCKER_HOST がこの PC（unix:// か npipe://）なら止まらず、--context を付けない', () => {
+	const ctx = makeContainerRepo();
+	const r = runContainer(ctx, { extraEnv: { DOCKER_HOST: isWindows ? 'npipe:////./pipe/fake' : 'unix:///run/user/1000/docker.sock' } });
+	return [r.code === 0 && r.calls.length > 0 && r.calls.every((c) => c[0] !== '--context' && c[0] !== 'context'), detail(r)];
+});
+
+containerCase('通る：-Base の差分に、未コミットの変更も入る', () => {
+	const ctx = makeContainerRepo();
+	ctx.git('checkout', '-q', '-b', 'feature');
+	ctx.write('feature.txt', 'feat\n');
+	commitAll(ctx.git, 'feat');
+	ctx.write('README.md', 'uncommitted\n');
+	const r = runContainer(ctx, { args: ['-Mode', 'review', '-Base', 'main', '-Container'] });
+	const diffFile = listCopied(r.cpDir).find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [r.code === 0 && diffText.includes('diff --git a/feature.txt b/feature.txt') && diffText.includes('+uncommitted'), detail(r)];
+});
+
+containerCase('止まる（docker を呼ばない）：根より下のリンク（Windows はジャンクション）', () => {
+	const ctx = makeContainerRepo();
+	const outside = path.join(root, `outside-${caseNo}`);
+	fs.mkdirSync(outside);
+	fs.writeFileSync(path.join(outside, 'x.txt'), 'outside\n');
+	fs.symlinkSync(outside, path.join(ctx.repo, 'linked'), isWindows ? 'junction' : 'dir');
+	const r = runContainer(ctx);
+	return [r.code !== 0 && r.stderr.includes('リンク') && r.calls.length === 0, detail(r)];
+});
+
+containerCase('通る：根より上のリンク（リンク経由の -WorkingDirectory）とサブディレクトリの -WorkingDirectory', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('sub/a.txt', 'a\n');
+	const viaLink = path.join(root, `via-link-${caseNo}`);
+	fs.symlinkSync(ctx.repo, viaLink, isWindows ? 'junction' : 'dir');
+	const r1 = runContainer(ctx, { workDir: viaLink });
+	const r2 = runContainer(ctx, { workDir: path.join(ctx.repo, 'sub') });
+	const copied2 = listCopied(r2.cpDir);
+	return [r1.code === 0 && r2.code === 0 && copied2.includes('c1__work_repo/package.json'), `${detail(r1)} ${detail(r2)}`];
+});
+
+containerCase('通る：名前の確かめの後（docker info の中）で .dev.vars を足しても、写すものと差分に入らない', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('README.md', 'changed\n');
+	const r = runContainer(ctx, { extraEnv: { FAKE_ON_INFO: '1' } });
+	const copied = listCopied(r.cpDir);
+	const diffFile = copied.find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [r.code === 0 && !copied.some((p) => p.includes('.dev.vars')) && !diffText.includes('.dev.vars'), `${detail(r)} copied=${copied.join(',')}`];
+});
+
+containerCase('通る：-Base の差分に、基準ブランチの後のコミットが入る', () => {
+	const ctx = makeContainerRepo();
+	ctx.git('checkout', '-q', '-b', 'feature');
+	ctx.write('feature.txt', 'feat\n');
+	commitAll(ctx.git, 'feat');
+	const r = runContainer(ctx, { args: ['-Mode', 'review', '-Base', 'main', '-Container'] });
+	const diffFile = listCopied(r.cpDir).find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [r.code === 0 && diffText.includes('diff --git a/feature.txt b/feature.txt'), detail(r)];
+});
+
+containerCase('通る：この PC の git の設定（diff.external・color.ui・diff.noprefix・fsmonitor）で差分の形が変わらず、fsmonitor のフックも動かない', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('README.md', 'changed\n');
+	const marker = path.join(root, `fsmonitor-${caseNo}.txt`);
+	const hook = path.join(root, `fsmonitor-${caseNo}.sh`);
+	fs.writeFileSync(hook, `#!/bin/sh\necho called > "${marker.replace(/\\/g, '/')}"\n`);
+	fs.chmodSync(hook, 0o755);
+	ctx.git('config', 'diff.external', 'false');
+	ctx.git('config', 'color.ui', 'always');
+	ctx.git('config', 'diff.noprefix', 'true');
+	ctx.git('config', 'core.fsmonitor', hook.replace(/\\/g, '/'));
+	// Windows の git はフックを sh で起動する。テストの PATH（git の cmd のフォルダだけ）には sh が無いので、Git の sh のフォルダを足す
+	// （git の場所は Git\cmd・Git\mingw64\bin・Git\ucrt64\bin などがあるので、上へたどって usr\bin\sh.exe を探す）
+	if (isWindows) {
+		let shDir = null;
+		for (let d = gitDir, i = 0; i < 4 && shDir === null; d = path.dirname(d), i++) {
+			if (fs.existsSync(path.join(d, 'usr', 'bin', 'sh.exe'))) shDir = path.join(d, 'usr', 'bin');
+		}
+		if (shDir !== null) ctx.env.PATH = `${ctx.env.PATH};${shDir}`;
+	}
+	// 対照：素の git status ならフックが動く（動かなければ、この確かめは空で通る）
+	ctx.git('status', '--porcelain');
+	const control = fs.existsSync(marker);
+	fs.rmSync(marker, { force: true });
+	const r = runContainer(ctx);
+	const diffFile = listCopied(r.cpDir).find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [control && r.code === 0 && diffText.startsWith('diff --git a/README.md b/README.md') && !diffText.includes('\u001b[') && !fs.existsSync(marker), `${detail(r)} control=${control} marker=${fs.existsSync(marker)}`];
+});
+
+containerCase('通る：イメージが無ければプラグインの container/ だけをコンテキストに作り、前の版を消す', () => {
+	const ctx = makeContainerRepo();
+	const r = runContainer(ctx, { extraEnv: { FAKE_DOCKER_NO_IMAGE: '1' } });
+	const build = verb(r.calls, 'build')[0] || [];
+	const context = build[build.length - 1] || '';
+	return [r.code === 0 && path.basename(context) === 'container' && !context.startsWith(ctx.repo) && build.includes('CODEX_VERSION=0.0.1')
+		&& r.calls.some((c) => c.includes('rm') && c.includes('ai-team-codex:0.0.0')) && !r.calls.some((c) => c.includes('rm') && c.includes('ai-team-codex:0.0.1')), detail(r)];
+});
+
+containerCase('通る：config.toml の model は sh -c の文字列に入らず、後ろの引数で渡る', () => {
+	const ctx = makeContainerRepo();
+	const home = path.join(root, `codex-home-model-${caseNo}`);
+	fs.mkdirSync(home);
+	fs.copyFileSync(path.join(codexHomeOk, 'AGENTS.md'), path.join(home, 'AGENTS.md'));
+	fs.writeFileSync(path.join(home, 'config.toml'), "model = \"a'b\"\nmodel_reasoning_effort = \"high\"\n[profiles.x]\nmodel = \"ignored\"\n");
+	const r = runContainer(ctx, { extraEnv: { CODEX_HOME: home } });
+	const ken = verb(r.calls, 'create')[1] || [];
+	const script = ken[ken.indexOf('-c') + 1] || '';
+	const tail = ken.slice(ken.lastIndexOf('sh') + 1);
+	return [r.code === 0 && !script.includes("a'b") && JSON.stringify(tail) === JSON.stringify(['-c', 'model="a\'b"', '-c', 'model_reasoning_effort="high"']), `${detail(r)} tail=${JSON.stringify(tail)}`];
+});
+
+for (const [name, extraEnv, word, wantCreate] of [
+	['docker info が失敗する', { FAKE_DOCKER_INFO_FAIL: '1' }, 'docker info', false],
+	['向き先がこの PC でない', { FAKE_DOCKER_ENDPOINT: 'ssh://user@remote' }, '向き先', false],
+	['向き先が別の PC の名前付きパイプ（npipe:////host/pipe/…）', { FAKE_DOCKER_ENDPOINT: 'npipe:////build-host/pipe/docker_engine' }, '向き先', false],
+	['DOCKER_HOST が別の PC の名前付きパイプ', { DOCKER_HOST: 'npipe:////build-host/pipe/docker_engine' }, 'DOCKER_HOST', false],
+	['コンテナ用のログインが無い', { FAKE_DOCKER_NO_LOGIN: '1' }, 'ログイン', false],
+	['準備のコマンドが失敗する', { FAKE_DOCKER_SETUP_FAIL: '1' }, 'container.setup', true],
+	['準備が /work/repo をリンクにすり替えた（97）', { FAKE_DOCKER_START_CODE: '97' }, 'すり替え', true],
+	['返事が取れない', { FAKE_DOCKER_NO_REPLY: '1' }, '返事', true],
+	['準備のコンテナへ写せない', { FAKE_DOCKER_CP_FAIL: 'prep' }, '作業ツリーをコンテナに写せません', true],
+	['健さんのコンテナへ写せない', { FAKE_DOCKER_CP_FAIL: 'ken' }, 'コンテナに写せません', true],
+]) {
+	containerCase(`止まる：${name}（作ったものは消す）`, () => {
+		const ctx = makeContainerRepo();
+		const tempBefore = listTemp();
+		const r = runContainer(ctx, { extraEnv });
+		const creates = verb(r.calls, 'create').length;
+		const removedAll = verb(r.calls, 'volume').filter((c) => c.includes('create')).length === verb(r.calls, 'volume').filter((c) => c.includes('rm')).length;
+		const ok = r.code !== 0 && r.stderr.includes(word) && (wantCreate ? creates > 0 : creates === 0) && removedAll && listTemp() === tempBefore
+			// 作ったコンテナは、全部 rm -f を打っている
+			&& verb(r.calls, 'create').every((_, i) => verb(r.calls, 'rm').some((c) => c.includes(`c${i + 1}`)));
+		return [ok, detail(r)];
+	});
+}
+
+containerCase('後始末に失敗したら、残ったものと消し方を出す（終了コードは変えない）', () => {
+	const ctx = makeContainerRepo();
+	const r = runContainer(ctx, { extraEnv: { FAKE_DOCKER_RM_FAIL: '1' } });
+	return [r.code === 0 && r.stderr.includes('消せなかった') && r.stderr.includes('docker rm -f c2') && r.stderr.includes('docker volume rm'), detail(r)];
+});
+
+containerCase('check -Container はイメージとログインを確かめるだけ（コンテナを作らず、健さんも呼ばない）', () => {
+	const ctx = makeContainerRepo();
+	const r = runContainer(ctx, { args: ['-Container', '-Mode', 'check'] });
+	return [r.code === 0 && r.stdout.includes('CHECK: ok') && verb(r.calls, 'create').length === 0 && verb(r.calls, 'run').length === 1 && !r.called, detail(r)];
+});
+
+containerCase('-Container は consult に付けられない', () => {
+	const ctx = makeContainerRepo();
+	const r = runContainer(ctx, { args: ['-Mode', 'consult', '-PromptFile', promptFile, '-Container'] });
+	return [r.code !== 0 && r.stderr.includes('review と check だけ') && r.calls.length === 0, detail(r)];
+});
+
+containerCase('worktree から呼んでも、メインのチェックアウトから呼んでも、写すものと差分が同じ', () => {
+	const ctx = makeContainerRepo();
+	const wt = path.join(root, `wt-${caseNo}`);
+	ctx.git('worktree', 'add', '-q', '-b', 'side', wt);
+	for (const dir of [ctx.repo, wt]) {
+		fs.writeFileSync(path.join(dir, 'README.md'), 'changed\n');
+		fs.writeFileSync(path.join(dir, 'new.txt'), 'new\n');
+	}
+	const pick = (r) => {
+		const copied = listCopied(r.cpDir);
+		const diffFile = copied.find((p) => p.endsWith('/review.diff'));
+		return JSON.stringify([copied, diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '']);
+	};
+	const main = runContainer(ctx);
+	const mainPick = pick(main);
+	caseNo++;
+	const fromWt = runContainer({ ...ctx, repo: wt }, { workDir: wt });
+	return [main.code === 0 && fromWt.code === 0 && mainPick === pick(fromWt), `${detail(main)} ${detail(fromWt)}`];
+});
+
+if (isWindows) {
+	containerCase('中継の .ps1 から -Container を付けても、旗として届く（consult に付けると止まる。docker には届かない）', () => {
+		const ctx = makeContainerRepo();
+		const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPs1, '-Mode', 'consult', '-Container', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+		return [r.status !== 0 && (r.stderr || '').includes('review と check だけ') && !fs.existsSync(ctx.mark), `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`];
+	});
+}
+
+containerCase('-Container は前・間・後ろのどこに置いても、次の語を値として食わない', () => {
+	const ctx = makeContainerRepo();
+	ctx.git('checkout', '-q', '-b', 'feature');
+	const codes = [['-Container', '-Mode', 'review', '-Base', 'main'], ['-Mode', 'review', '-Container', '-Base', 'main'], ['-Mode', 'review', '-Base', 'main', '-container']]
+		.map((args) => runContainer(ctx, { args }).code);
+	return [codes.every((c) => c === 0), `codes=${codes.join(',')}`];
+});
 
 // ---- Windows だけ：codex の探し方と、前の呼び方（invoke-codex.ps1）の中継（#100） ----
 if (isWindows) {

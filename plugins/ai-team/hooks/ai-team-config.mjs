@@ -26,8 +26,12 @@ export const OK_MARK = 'ai-team-config: ok';
 // 導入済みのリポジトリの .claude/ai-team.json に残っていても止めないよう、形だけ確かめて読み捨てる。
 const GLOB_KEYS = ['secretPatterns', 'plannerWritable'];
 
-// 知っているキー（グロブの配列と、呼び名の対応）。
-const CONFIG_KEYS = [...GLOB_KEYS, 'names'];
+// 知っているキー（グロブの配列と、呼び名の対応と、コンテナの中のレビューの設定）。
+const CONFIG_KEYS = [...GLOB_KEYS, 'names', 'container'];
+
+// container（健さんの review をコンテナで動かすときの設定。#99）のキー。
+// setup：準備のコンテナで打つコマンド（依存を入れるなど）、test：健さんに打たせるテストのコマンド。
+const CONTAINER_KEYS = ['setup', 'test'];
 
 // 呼び名を変えられる、既定の名前（names のキー）。文書の中の名前は、この既定の名前で書いてある。
 export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう'];
@@ -173,7 +177,7 @@ function parseConfig(buffer) {
 		}
 	}
 
-	const result = { names: parseNames(data.names) };
+	const result = { names: parseNames(data.names), container: parseContainer(data.container) };
 
 	for (const key of GLOB_KEYS) {
 		const value = data[key];
@@ -279,10 +283,47 @@ function parseNames(value) {
 	return names;
 }
 
+// container を確かめる。無ければ null。壊れていれば Error を投げる。
+// setup・test の両方が要り、どちらも空でない1行の文字列（改行・制御文字なし）。ほかのキーは受けない。
+// 中身（コマンド）は、止める理由に入れない。
+function parseContainer(value) {
+	if (value === undefined) {
+		return null;
+	}
+
+	if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('container がオブジェクトではありません');
+	}
+
+	for (const key of Object.keys(value)) {
+		if (!CONTAINER_KEYS.includes(key)) {
+			throw new Error(`container に知らないキーがあります（使えるのは ${CONTAINER_KEYS.join('・')}）`);
+		}
+	}
+
+	const container = {};
+
+	for (const key of CONTAINER_KEYS) {
+		const command = value[key];
+
+		if (typeof command !== 'string' || command.trim() === '') {
+			throw new Error(`container の ${key} が空か、文字列ではありません`);
+		}
+
+		if ([...command].some((c) => { const n = c.codePointAt(0); return n < 0x20 || (n >= 0x7f && n <= 0x9f) || n === 0x2028 || n === 0x2029; })) {
+			throw new Error(`container の ${key} に改行か制御文字があります`);
+		}
+
+		container[key] = command.trim();
+	}
+
+	return container;
+}
+
 // 設定ファイルを読む。candidates は絶対パスの一覧で、前から順に見て、最初に「ある」ものを読む。
 // 結果は次のどれか。
 // - { status: 'none' }                                          … どの候補も無い（既定の一覧だけで動く）
-// - { status: 'ok', file, secretRegexps, names }                … 読めた（names は呼び名の対応。無ければ {}）
+// - { status: 'ok', file, secretRegexps, names, container }     … 読めた（names は呼び名の対応。無ければ {}。container は無ければ null）
 // - { status: 'broken', file, reason, link }                    … 壊れている。link は「リンク切れ」のとき真
 // 設定ファイルか親のディレクトリがリンクで、リンク先が無いときは、「無い」ではなくリンク切れとして止める
 // （足したパターンが黙って消えないため）。
@@ -312,7 +353,7 @@ export function readConfig(candidates, lstat = lstatSync) {
 		try {
 			const parsed = parseConfig(readFileSync(file));
 
-			return { status: 'ok', file, secretRegexps: parsed.secretPatterns, names: parsed.names };
+			return { status: 'ok', file, secretRegexps: parsed.secretPatterns, names: parsed.names, container: parsed.container };
 		} catch (e) {
 			return { status: 'broken', file, reason: e.message, link: false };
 		}
@@ -332,6 +373,8 @@ export function isSecretPath(rel, extraRegexps = []) {
 // ---- ラッパーから呼ぶ入口 ----
 // node ai-team-config.mjs check --root <根> [--root <根2>] --paths-file <ファイル> --out <ファイル>
 // 終了コード：0 = 当たるパスなし / 1 = 引数やファイルの読み込みの失敗 / 2 = 設定ファイルが壊れている / 3 = 秘密情報に当たるパスがある
+// 0 のときの --out は、1行目が印。container の設定があれば、2行目に `container: <JSON>` を書く
+// （前の --root から順に見て、最初にあったもの。ラッパーは作業の根を先に渡すので、作業の根が優先される）
 function cli(argv) {
 	const [command, ...rest] = argv;
 	const roots = [];
@@ -366,6 +409,7 @@ function cli(argv) {
 	}
 
 	const extra = [];
+	let container = null;
 
 	for (const root of roots) {
 		const config = readConfig(CONFIG_CANDIDATES.map((c) => path.join(root, ...c.split('/'))));
@@ -383,6 +427,10 @@ function cli(argv) {
 
 		if (config.status === 'ok') {
 			extra.push(...config.secretRegexps);
+
+			if (container === null && config.container !== null) {
+				container = config.container;
+			}
 		}
 	}
 
@@ -402,7 +450,8 @@ function cli(argv) {
 	// 終了コード 0 のときも印を書く（ラッパーは印が無ければ「確かめが済んだか分からない」として止まる）
 	try {
 		writeFileSync(outFile, `${OK_MARK}
-`);
+${container === null ? '' : `container: ${JSON.stringify(container)}
+`}`);
 	} catch (e) {
 		process.stderr.write(`ai-team-config: 出力を書けません: ${e.message}
 `);
