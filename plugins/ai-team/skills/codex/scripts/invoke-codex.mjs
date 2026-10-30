@@ -291,11 +291,13 @@ function secretCandidates(file, checkRoots) {
 	return [...out];
 }
 
-// 健さんが作った画像（<CODEX_HOME>/generated_images/ の下。実体で比べる）か。-Image に限り、守る場所の照らしから外す
+// 健さんが作った画像（<CODEX_HOME>/generated_images/ の下。実体で比べる）か。-Image に限り、守る場所の照らしから外す。
+// 通す側の判定なので、場所の判定（Windows だけそろえる）で比べる（Mac の大文字小文字を区別する APFS で、
+// GENERATED_IMAGES のような別のフォルダを同じと見て通さないため）
 function isGeneratedImage(real) {
 	const dir = path.resolve(codexHome(), 'generated_images');
 	const dirs = [dir, realNative(dir)].filter((d) => d !== null);
-	return dirs.some((d) => isUnderFolded(real, d) && !sameCaseFolded(real, d));
+	return dirs.some((d) => isUnderLocation(real, d.endsWith(path.sep) ? d : d + path.sep) && !sameLocation(real, d));
 }
 
 // 送るファイルを決める：入力のまま実体を取る（path.resolve で .. を畳むと、リンクの先の親ではなく見たままの親になりずれるため）
