@@ -435,7 +435,8 @@ try {
 		run('呼び名: 前後の空白を除いて20文字なら通る（長さは空白を取った後で数える）', { file: p('src', 'a.php') }, 0);
 	});
 	// 今使っている形の呼び名は通る（#110）
-	for (const ok of ['アヤ', 'ハナコ', 'ゆう', 'ケン', 'Aya', 'ジュン ちゃん', 'ハナ子', 'ジュン　ちゃん', 'ハナ・コ', 'ハナー', 'ガ゙']) {
+	// 濁点・半濁点の結合文字（U+3099・U+309A）は通る
+	for (const ok of ['アヤ', 'ハナコ', 'ゆう', 'ケン', 'Aya', 'ジュン ちゃん', 'ハナ子', 'ジュン　ちゃん', 'ハナ・コ', 'ハナー', 'ガ゙', `ハ${String.fromCharCode(0x309a)}`, `ガ${String.fromCharCode(0x3099)}`]) {
 		withConfig(j({ names: { メジェド: ok } }), () => {
 			run(`呼び名: ${JSON.stringify(ok)} は通る`, { file: p('src', 'a.php') }, 0);
 		});
@@ -477,6 +478,17 @@ try {
 		['names の呼び名に見えない文字（U+200B）', j({ names: { メジェド: `ハナ${String.fromCharCode(0x200b)}コ` } })],
 		['names の呼び名がほかの既定の名前（まーちゅう→ガネーシャ）', j({ names: { まーちゅう: 'ガネーシャ' } })],
 		['names の2つのキーに同じ呼び名', j({ names: { メジェド: 'ハナコ', 藤さん: 'ハナコ' } })],
+		['names の呼び名に異体字セレクタ（まーちゅう承認済み）', j({ names: { まーちゅう: `まーちゅう承${String.fromCharCode(0xfe00)}認済${String.fromCharCode(0xfe00)}み` } })],
+		['names の呼び名に結合書記素接合子（U+034F）', j({ names: { メジェド: `ハナ${String.fromCharCode(0x34f)}コ` } })],
+		['names の呼び名に単独の濁点（U+309B）', j({ names: { メジェド: `ガ${String.fromCharCode(0x309b)}` } })],
+		['names の呼び名が禁止語（「・」で割った 許・可）', j({ names: { メジェド: '許・可' } })],
+		['names の呼び名が禁止語（長音で割った adーmin）', j({ names: { メジェド: 'adーmin' } })],
+		['names の呼び名が禁止語を含む（Badminton。部分一致は受け入れる）', j({ names: { メジェド: 'Badminton' } })],
+		['names の呼び名がほかの既定の名前（長音が漢字の一：ガネ一シャ）', j({ names: { まーちゅう: 'ガネ一シャ' } })],
+		['names の呼び名がほかの既定の名前（小さいカナを大きく：メジエド）', j({ names: { まーちゅう: 'メジエド' } })],
+		['names の呼び名が長音だけ（ーーー）', j({ names: { メジェド: 'ーーー' } })],
+		['names の呼び名が「・」だけ（・・・）', j({ names: { メジェド: '・・・' } })],
+		['names の呼び名が結合文字だけ', j({ names: { メジェド: String.fromCharCode(0x3099) } })],
 		['知っているキーの打ち間違い（containers）', j({ containers: { setup: 'npm ci', test: 'npm test' } })],
 		['container が配列', j({ container: ['npm ci'] })],
 		['container に test が無い', j({ container: { setup: 'npm ci' } })],

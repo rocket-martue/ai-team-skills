@@ -39,16 +39,33 @@ export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '�
 // 呼び名の長さの上限（文字数。前後の空白を取った後）。
 const NAME_MAX_LENGTH = 20;
 
-// 呼び名として受ける文字：文字（\p{L}）・結合文字（\p{M}）・数字（\p{N}）・空白（半角・全角）・「・」（U+30FB）「ー」（U+30FC）「ｰ」（U+FF70）だけ。
-// 句読点・かっこ・記号は受けない（呼び名に文や指示を混ぜて、SessionStart で文脈に入れる1行から効かせないため。#110）。
-const NAME_CHARS = /^[\p{L}\p{M}\p{N} 　・ーｰ]+$/u;
+// 呼び名として受ける文字：文字（\p{L}）・数字（\p{N}）・空白（半角・全角）・「・」（U+30FB）「ー」（U+30FC）「ｰ」（U+FF70）・
+// 日本語の濁点・半濁点の結合文字（U+3099・U+309A）だけ。ほかの結合文字（異体字セレクタ・U+034F など。見えないまま語を割れる）・
+// 句読点・かっこ・記号は受けない（記号で文を作らせて、SessionStart で文脈に入れる1行から効かせないため。#110）。
+const NAME_CHARS = /^[\p{L}\p{N} 　・ーｰ゙゚]+$/u;
 
 // 呼び名に入っていてはいけない語（NFKC にそろえて小文字にしてから見る）。役割や許可を言い換える語を弾く。
 const NAME_FORBIDDEN_WORDS = ['承認', '許可', '確認', '解除', '無視', '指示', '命令', '権限', '管理者', '不要', '済み', 'approve', 'allow', 'ignore', 'admin', 'permission'];
 
-// 呼び名を比べるときのそろえ方（NFKC・小文字・空白なし）。
+// 禁止語を見るときのそろえ方：NFKC・小文字にして、空白・「・」「ー」「ｰ」・結合文字を全部取り除く（語の間に挟んで割るのを防ぐ）。
+function foldForbidden(name) {
+	return name.normalize('NFKC').toLowerCase().replace(/[\s・ーｰ\p{M}]/gu, '');
+}
+
+// 小さいカナ → 大きいカナ（同じ順）
+const SMALL_KANA = 'ァィゥェォャュョッヮぁぃぅぇぉゃゅょっゎ';
+const LARGE_KANA = 'アイウエオヤユヨツワあいうえおやゆよつわ';
+
+// 呼び名どうしを比べるときのそろえ方：NFKC・小文字・空白と「・」と結合文字を除く、
+// 長音に似た字（ー・一・－・ｰ）を同じ字にそろえる、小さいカナを大きいカナにそろえる。
+// 見た目が似た字（カタカナの「ニ」と漢字の「二」、「ロ」と「口」など）は、そろえきれない。
 function foldName(name) {
-	return name.normalize('NFKC').toLowerCase().replace(/[\s　]/gu, '');
+	return name
+		.normalize('NFKC')
+		.toLowerCase()
+		.replace(/[\s・\p{M}]/gu, '')
+		.replace(/[ー一－ｰ\-]/gu, 'ー')
+		.replace(/[ァィゥェォャュョッヮぁぃぅぇぉゃゅょっゎ]/gu, (c) => LARGE_KANA[SMALL_KANA.indexOf(c)]);
 }
 
 // Windows と Mac（既定の APFS）のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
@@ -353,14 +370,21 @@ function parseNames(value) {
 		}
 
 		if (!NAME_CHARS.test(trimmed)) {
-			throw new Error('names の呼び名に、文字・数字・空白・「・」「ー」以外（句読点・かっこ・記号など）があります');
+			throw new Error('names の呼び名に、文字・数字・空白・「・」「ー」・濁点の結合文字以外（句読点・かっこ・記号・ほかの結合文字など）があります');
+		}
+
+		const stripped = foldForbidden(trimmed);
+
+		// 文字か数字が1つも無い呼び名（「ーーー」「・・・」・結合文字だけ）は受けない
+		if (!/[\p{L}\p{N}]/u.test(stripped)) {
+			throw new Error('names の呼び名に、文字も数字もありません');
+		}
+
+		if (NAME_FORBIDDEN_WORDS.some((word) => stripped.includes(word))) {
+			throw new Error('names の呼び名に、使えない語があります');
 		}
 
 		const folded = foldName(trimmed);
-
-		if (NAME_FORBIDDEN_WORDS.some((word) => folded.includes(word))) {
-			throw new Error('names の呼び名に、使えない語があります');
-		}
 
 		// 役の取り違えを防ぐ：ほかの既定の名前と同じ呼び名・2つのキーで同じ呼び名は受けない。
 		if (DEFAULT_NAMES.some((other) => other !== key && foldName(other) === folded)) {

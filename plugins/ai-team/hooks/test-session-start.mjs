@@ -143,6 +143,12 @@ try {
 		['呼び名が21文字', JSON.stringify({ names: { メジェド: 'あ'.repeat(21) } })],
 		['呼び名がほかの既定の名前', JSON.stringify({ names: { まーちゅう: 'ガネーシャ' } })],
 		['2つのキーに同じ呼び名', JSON.stringify({ names: { メジェド: 'ハナコ', 藤さん: 'ハナコ' } })],
+		['呼び名に異体字セレクタ', JSON.stringify({ names: { まーちゅう: `まーちゅう承${String.fromCharCode(0xfe00)}認済${String.fromCharCode(0xfe00)}み` } })],
+		['呼び名が禁止語を「・」で割った', JSON.stringify({ names: { メジェド: '許・可' } })],
+		['呼び名が禁止語を長音で割った', JSON.stringify({ names: { メジェド: 'adーmin' } })],
+		['呼び名がほかの既定の名前（ガネ一シャ）', JSON.stringify({ names: { まーちゅう: 'ガネ一シャ' } })],
+		['呼び名がほかの既定の名前（メジエド）', JSON.stringify({ names: { まーちゅう: 'メジエド' } })],
+		['呼び名が長音だけ', JSON.stringify({ names: { メジェド: 'ーーー' } })],
 	]) {
 		const r = call(realHook, project(`broken-${label}`, config));
 		check(`呼び名：設定が壊れている（${label}）: 終了コード 0`, r.status === 0);
@@ -202,6 +208,37 @@ try {
 	mkdirSync(path.join(wtOwn, '.claude'), { recursive: true });
 	writeFileSync(path.join(wtOwn, '.claude', 'ai-team.json'), JSON.stringify({ names: { メジェド: 'ナナ' } }), 'utf8');
 	check('worktree：プロジェクトの根の呼び名を先に使う', call(realHook, wtOwn).context.includes(`${NAMES_HEAD}メジェド＝ナナ。`));
+
+	// 壊れた設定がプロジェクトの中なら、「Edit で直せる」が出て「直せない」は出ない
+	const inBroken = call(realHook, project('in-broken', '{ not json'));
+	check(
+		'壊れた設定がプロジェクトの中：「Edit で直せる」が出て、「直せない」は出ない',
+		inBroken.status === 0 && inBroken.context.includes('Edit で直せる') && !inBroken.context.includes('直せない')
+	);
+
+	// プロジェクトの根は ok で names ありでも、メインが壊れていれば「既定のまま」（呼び名は入れない）
+	const wtOkMainBroken = worktreeOf('wt-ok-main-broken', '{ not json');
+	mkdirSync(path.join(wtOkMainBroken, '.claude'), { recursive: true });
+	writeFileSync(path.join(wtOkMainBroken, '.claude', 'ai-team.json'), JSON.stringify({ names: { メジェド: 'ナナ' } }), 'utf8');
+	const wtOkMainBrokenResult = call(realHook, wtOkMainBroken);
+	check(
+		'worktree：プロジェクトの根が ok で names ありでも、メインが壊れていれば「既定のまま」',
+		wtOkMainBrokenResult.status === 0 && !wtOkMainBrokenResult.context.includes(NAMES_HEAD) && wtOkMainBrokenResult.context.includes('呼び名は既定のまま') && wtOkMainBrokenResult.context.includes('このセッションからは直せない')
+	);
+
+	// プロジェクトがチェックアウトのサブフォルダで、親（同じチェックアウト）の設定が壊れているとき：
+	// ガードはプロジェクトの外の編集を止めるので「直せない」と言う。置き場所は「メインのチェックアウト」ではなく「親フォルダ」と言う
+	const checkout = path.join(sandbox, 'sub-checkout');
+	mkdirSync(path.join(checkout, '.git'), { recursive: true });
+	mkdirSync(path.join(checkout, '.claude'), { recursive: true });
+	writeFileSync(path.join(checkout, '.claude', 'ai-team.json'), '{ not json', 'utf8');
+	const subDir = path.join(checkout, 'packages', 'app');
+	mkdirSync(subDir, { recursive: true });
+	const subResult = call(realHook, subDir);
+	check(
+		'サブフォルダ：親（同じチェックアウト）の設定が壊れていれば「直せない（親フォルダ）」と言い、「メインのチェックアウト」とは言わない',
+		subResult.status === 0 && subResult.context.includes('呼び名は既定のまま') && subResult.context.includes('直せない') && subResult.context.includes('親フォルダ') && !subResult.context.includes('メインのチェックアウト')
+	);
 
 	// gitRoots が broken を返しても止めない（.git のファイルに gitdir: の行が無い）
 	const gitBroken = path.join(sandbox, 'git-broken');

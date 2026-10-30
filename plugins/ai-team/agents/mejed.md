@@ -17,7 +17,7 @@ model: haiku
 
 - `${CLAUDE_PLUGIN_ROOT}/docs/team-rules.md`（チーム共通の決まり）と、リポジトリの `docs/team/common-rules.md`（コーディングとチェックコマンド）
 - ガネーシャに計画書（`docs/tasks/<タスク名>/plan.md`）を渡されたら、それも読む
-- リポジトリの `.claude/ai-team.json` に `names`（呼び名の対応）があれば、この定義や決まりの名前（既定の名前）を、その対応で読み替える（自分の名前も）。ファイルや `names` が無ければ既定の名前のままでよい（止まる理由にしない）
+- `names`（呼び名の対応）を、プロジェクトの根の `.claude/ai-team.json`（無ければ `repo-files/claude/ai-team.json`）から読み、そこに `names` が無ければ、メインのチェックアウトの根（worktree のとき）の設定から読む（SessionStart と同じ）。あれば、この定義や決まりの名前（既定の名前）を、その対応で読み替える（自分の名前も）。ファイルや `names` が無ければ既定の名前のままでよい（止まる理由にしない）
 - 読めないファイルがあれば、作業を始めずに報告する
 
 ## 実装するとき

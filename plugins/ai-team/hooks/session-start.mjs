@@ -29,6 +29,14 @@ async function namesLine() {
 
 	try {
 		const { readConfig, gitRoots, forPath, CONFIG_CANDIDATES, DEFAULT_NAMES } = await import('./ai-team-config.mjs');
+		// target が dir の中（dir そのものを含む）か。ガード（guard-code-edit.mjs）の isInside と同じ形
+		const normalize = (p) => forPath(path.resolve(p).split(path.sep).join('/'));
+		const isInside = (target, dir) => {
+			const t = normalize(target);
+			const d = normalize(dir);
+
+			return t === d || t.startsWith(d.endsWith('/') ? d : d + '/');
+		};
 		const candidatesOf = (root) => CONFIG_CANDIDATES.map((c) => path.join(root, ...c.split('/')));
 
 		// 読む根：プロジェクトの根と、そのメインのチェックアウトの根（ガードと同じ。#108）。
@@ -36,9 +44,14 @@ async function namesLine() {
 		const loadedProject = readConfig(candidatesOf(projectDir));
 		let loadedMain = { status: 'none' };
 		let mainRoot = null;
+		let checkoutRoot = null;
 
 		try {
 			const roots = gitRoots(projectDir);
+
+			if (roots !== null && !roots.broken) {
+				checkoutRoot = roots.root;
+			}
 
 			if (roots !== null && !roots.broken && roots.main !== null && forPath(path.resolve(roots.main)) !== forPath(path.resolve(projectDir))) {
 				mainRoot = roots.main;
@@ -50,9 +63,15 @@ async function namesLine() {
 
 		if (loadedProject.status === 'broken' || loadedMain.status === 'broken') {
 			const brokenFile = loadedProject.status === 'broken' ? loadedProject.file : loadedMain.file;
-			const rel = path.relative(forPath(path.resolve(projectDir)), forPath(path.resolve(brokenFile)));
-			const outside = rel.startsWith('..') || path.isAbsolute(rel);
-			const how = outside ? 'このセッションからは直せない（プロジェクトの外にある設定ファイル。メインのチェックアウトで直す）' : '設定ファイルそのものは Edit で直せる';
+			// プロジェクトの外にあるときは「直せない」と言う（ガードと同じ isInside。ガードはプロジェクトの外の編集を止めるため）。
+			// 置き場所は、同じチェックアウトの親フォルダか、ほかのチェックアウト（worktree のメイン）かで言い分ける
+			const outside = !isInside(brokenFile, projectDir);
+			const sameCheckout = checkoutRoot !== null && isInside(brokenFile, checkoutRoot);
+			const how = !outside
+				? '設定ファイルそのものは Edit で直せる'
+				: sameCheckout
+					? 'このセッションからは直せない（プロジェクトの親フォルダにある設定ファイル。その場所を開いたセッションか、手で直す）'
+					: 'このセッションからは直せない（プロジェクトの外にある設定ファイル。メインのチェックアウトで直す）';
 
 			return `.claude/ai-team.json を読めないので、呼び名は既定のまま（直すまで、ガードは設定ファイルのほかの編集を止め、健さんも呼ばない。${how}）\n`;
 		}
