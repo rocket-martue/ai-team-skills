@@ -13,9 +13,17 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 
 ## 前提
 
+最低要件（これより古い版は扱わない）：
+
+| もの | 版 | 理由 |
+| --- | --- | --- |
+| Node.js | 22 以降 | フックとラッパーを動かす（20 は 2026年4月にサポートが終わった） |
+| Git | 2.36 以降 | ラッパーが `git worktree list -z` を使う |
+| Claude Code | 2.1.295 以降 | 編集のガードの `onFailure: "block"` が効く |
+
 - 日本語で進める WordPress（PHP、phpcs）の案件向け。ほかの技術スタックでは、リポジトリの `docs/team/common-rules.md` と `.claude/settings.json` の allow を書き換える
 - Claude Code（VS Code の拡張か CLI）で使う。Cursor でも、Claude Code の拡張（か Cursor のターミナルで打つ `claude`）なら同じように動く。Cursor 自体のチャット・Agent では、モデルに Claude を選んでも動かない（プラグイン・フック・エージェントは Claude Code の仕組みのため）
-- フックに Node.js が要る。編集のガードは、Claude Code 2.1.295 以降なら、node が PATH に無い・途中で失敗した・時間切れのときも編集を止める（`onFailure: "block"`）。それより前の版では、フックは何も言わずに外れる。なお、2.1.295 より前の版が `onFailure` をどう扱うかは確かめていない
+- フックに Node.js が要る。編集のガードは、node が PATH に無い・途中で失敗した・時間切れのときも編集を止める（`onFailure: "block"`）
 - マーケットプレイスの登録に git が要る（GitHub から clone するため）
 - 入れるフォルダは git のリポジトリでなくてもよい（ガードとフックは、開いたフォルダを根として見る）。ただし、差分を使うもの（健さんのレビュー・藤さんに比べるブランチで見てもらう・純ちゃん・コミットと PR）は使えない。健さんへの相談と画像の生成は使える。そのときは「使うリポジトリごと」の 6 を飛ばす。「入ったかを確かめる」の 2 の `git fetch origin` は失敗する（`not a git repository`）が、確認のダイアログが出なければ allow は効いている
 - 健さんは使わなくても回る。使うときは、各 PC に Codex CLI と健さんの AGENTS.md が要る（健さんにテストも打たせる「コンテナでのレビュー」を使うなら、Docker も）。ラッパーは Node.js で書いてあり、Windows・Mac・Linux で動く（Mac は、テストを Linux で通しただけで、実機ではまだ確かめていない）
