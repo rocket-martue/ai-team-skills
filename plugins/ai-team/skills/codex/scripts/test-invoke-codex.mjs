@@ -1113,6 +1113,80 @@ if (!isWindows) {
 	console.log('skip lnk/../ の確かめ 3 つ（Windows は .. を字面で畳むので、Mac・Linux だけ）');
 }
 
+// ---- 2巡目のレビューの確かめ（#106） ----
+// 1. 実体のパスを、入っているチェックアウトの根（メインの根）からの相対パスでも照らす。
+// worktree の中の lnk がメインの private/sub を指し、-Image lnk/../ref.png の実体はメインの private/ref.png（設定の private/** に当たる）
+if (!isWindows) {
+	sendCase('止まる: -Image lnk/../ref.png（worktree の lnk がメインの private/sub を指す。メインの設定の private/** に当たる）', () => {
+		const main = makeRepo();
+		commitAll(main.git, 'init');
+		const wt = path.join(root, `wt-private-${caseNo}`);
+		gitIn(main.repo, main.env, 'worktree', 'add', '-q', '-b', 'feature-private', wt);
+		fs.mkdirSync(path.join(main.repo, '.claude'), { recursive: true });
+		fs.writeFileSync(path.join(main.repo, '.claude', 'ai-team.json'), j({ secretPatterns: ['private/**'] }));
+		fs.mkdirSync(path.join(main.repo, 'private', 'sub'), { recursive: true });
+		fs.writeFileSync(path.join(main.repo, 'private', 'ref.png'), 'secret');
+		fs.symlinkSync(path.join(main.repo, 'private', 'sub'), path.join(wt, 'lnk'), 'dir');
+		const r = runSend(main, ['-Mode', 'image', '-WorkingDirectory', wt, '-PromptFile', promptFile, '-Image', 'lnk/../ref.png'], { cwd: wt });
+		return [stopped(r, sendWord) && r.stderr.includes('lnk'), sendDetail(r)];
+	});
+} else {
+	console.log('skip worktree のリンク経由でメインの private/** に当たる確かめ（Windows は .. を字面で畳むので、Mac・Linux だけ）');
+}
+
+// 2. 健さんが作った画像（<CODEX_HOME>/generated_images/ の下）は -Image に通す。auth.json など、ほかの守る場所の中は止める
+{
+	const codexHome106 = path.join(root, `codex-home-106-gen`);
+	fs.mkdirSync(path.join(codexHome106, 'generated_images', 'x'), { recursive: true });
+	fs.writeFileSync(path.join(codexHome106, 'generated_images', 'x', 'a.png'), 'x');
+	fs.writeFileSync(path.join(codexHome106, 'auth.json'), '{"dummy":true}\n');
+	const genEnv = { CODEX_HOME: codexHome106 };
+	sendCase('止まらない: -Image が <CODEX_HOME>/generated_images/x/a.png（健さんが作った画像。偽物の codex まで届く）', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const r = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', promptFile, '-Image', path.join(codexHome106, 'generated_images', 'x', 'a.png')], { extraEnv: genEnv });
+		return [r.called && r.code === 2, sendDetail(r)];
+	});
+	sendCase('止まる: -Image が <CODEX_HOME>/auth.json（generated_images の外の守る場所）', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const r = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', promptFile, '-Image', path.join(codexHome106, 'auth.json')], { extraEnv: genEnv });
+		return [stopped(r, sendWord), sendDetail(r)];
+	});
+	sendCase('止まる: -PromptFile が <CODEX_HOME>/generated_images/x/a.png（外すのは -Image だけ）', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', path.join(codexHome106, 'generated_images', 'x', 'a.png')], { extraEnv: genEnv });
+		return [stopped(r, sendWord), sendDetail(r)];
+	});
+}
+
+// 3. relOrAbs の大文字小文字のそろえ方（Mac の動きは、関数に fold を渡して確かめる）
+{
+	const { relOrAbs } = await import(pathToFileURL(wrapper).href);
+	const base = path.resolve(path.sep, 'Repo106');
+	const child = path.join(base, 'Private', 'x.png');
+	const lowerBase = base.toLowerCase();
+	sendCase('relOrAbs: 大文字小文字をそろえると、綴りが違う根の中でも相対パスになる（fold あり）', () => {
+		const got = relOrAbs(child, lowerBase, true);
+		return [got === 'Private/x.png', got];
+	});
+	sendCase('relOrAbs: そろえないと、綴りが違う根の中は絶対パスのまま（fold なし）', () => {
+		const got = relOrAbs(child, lowerBase, false);
+		return [got === child.replace(/\\/g, '/'), got];
+	});
+	sendCase('relOrAbs: 綴りが同じ根の中は、どちらでも相対パス', () => {
+		const a = relOrAbs(child, base, true);
+		const b = relOrAbs(child, base, false);
+		return [a === 'Private/x.png' && b === 'Private/x.png', `${a} ${b}`];
+	});
+	sendCase('relOrAbs: 根の外は絶対パス', () => {
+		const other = path.resolve(path.sep, 'Other106', 'y.png');
+		const got = relOrAbs(other, base, true);
+		return [got === other.replace(/\\/g, '/'), got];
+	});
+}
+
 // 5. メインのチェックアウトの根（git worktree list）。git の呼び出しを偽物の git に差し替える確かめは、シェルのスクリプトが要るので Mac・Linux だけ
 if (!isWindows) {
 	const realGit = path.join(gitDir, 'git');

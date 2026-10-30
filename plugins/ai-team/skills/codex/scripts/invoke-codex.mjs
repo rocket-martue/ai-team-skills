@@ -217,10 +217,10 @@ function withSep(p) {
 	return p.endsWith(path.sep) ? p : p + path.sep;
 }
 
-function isUnderFolded(child, parent) {
+function isUnderFolded(child, parent, fold = foldsForMatch) {
 	const a = withSep(child);
 	const b = withSep(parent);
-	return foldsForMatch ? a.toLowerCase().startsWith(b.toLowerCase()) : a.startsWith(b);
+	return fold ? a.toLowerCase().startsWith(b.toLowerCase()) : a.startsWith(b);
 }
 
 // 見たままのパスと実体（取れれば）
@@ -270,15 +270,32 @@ function checkWorkingDirectory(dir) {
 }
 
 // 共有モジュールの check に渡すパス（リポジトリの根からの相対。区切りは /）。根の中なら相対パス、外なら絶対パス
-function relOrAbs(p, base) {
-	const withSep = base.endsWith(path.sep) ? base : base + path.sep;
-	return (isUnderLocation(p, withSep) ? p.slice(withSep.length) : p).replace(/\\/g, '/');
+// 根の中かは、Windows・Mac で大文字小文字をそろえて見る（sameCaseFolded と同じ。Mac の既定の APFS で根の綴りが違っても相対にする。当たりやすくなる側）
+export function relOrAbs(p, base, fold = foldsForMatch) {
+	return (isUnderFolded(p, base, fold) ? p.slice(withSep(base).length) : p).replace(/\\/g, '/');
 }
 
-// 健さんに送るファイル（頼みの文・参照画像）を照らすパス。見たままのパスと、リンクをたどった実体のパスの両方
+// 健さんに送るファイル（頼みの文・参照画像）を照らすパス。見たままのパスと、リンクをたどった実体のパスの両方を、
+// 照らす根（作業の根・メインの根。見たままと実体）からの相対パス（と、根の外なら絶対パス）にしたもの。
+// 設定の private/** のような先頭からのグロブは、そのファイルが入っているチェックアウトの根からの相対でないと当たらないため
 // real は、入力（.. を畳む前）に fs.realpathSync.native をかけたもの。送るのも読むのもこの実体なので、照らすファイルと送るファイルがずれない
-function secretCandidates(file, repoRoot, realRoot) {
-	return [relOrAbs(path.resolve(file.seen), repoRoot), relOrAbs(file.real, realRoot)];
+function secretCandidates(file, checkRoots) {
+	const bases = [];
+	for (const r of checkRoots) bases.push(r, realNative(r));
+	const seen = path.resolve(file.seen);
+	const out = new Set();
+	for (const base of bases.filter((b) => b !== null)) {
+		out.add(relOrAbs(seen, base));
+		out.add(relOrAbs(file.real, base));
+	}
+	return [...out];
+}
+
+// 健さんが作った画像（<CODEX_HOME>/generated_images/ の下。実体で比べる）か。-Image に限り、守る場所の照らしから外す
+function isGeneratedImage(real) {
+	const dir = path.resolve(codexHome(), 'generated_images');
+	const dirs = [dir, realNative(dir)].filter((d) => d !== null);
+	return dirs.some((d) => isUnderFolded(real, d) && !sameCaseFolded(real, d));
 }
 
 // 送るファイルを決める：入力のまま実体を取る（path.resolve で .. を畳むと、リンクの先の親ではなく見たままの親になりずれるため）
@@ -788,11 +805,12 @@ function main(cleanups, argv, deps) {
 	if (sendFiles.length > 0) {
 		// 守る場所（~/.codex/auth.json・~/.aws/credentials など）の中のファイルも送らない
 		for (const f of sendFiles) {
+			// 健さんが作った画像は、-Image に限って外す（前に作った画像を次の参照に使えるように）。下の秘密情報の照らしは通す
+			if (imageFiles.includes(f) && isGeneratedImage(f.real)) continue;
 			const where = sensitiveLocation(f.seen) ?? sensitiveLocation(f.real);
 			if (where !== null) stopWrapper(`頼みの文のファイル（または参照画像）が${where}の中にあるので、健さんに送りません: ${f.seen}`);
 		}
-		const realRoot = fs.realpathSync.native(repoRoot);
-		const entries = sendFiles.map((f) => ({ file: f.seen, paths: secretCandidates(f, repoRoot, realRoot) }));
+		const entries = sendFiles.map((f) => ({ file: f.seen, paths: secretCandidates(f, checkRoots) }));
 		const sent = runConfigCheck(configModule, checkRoots, entries.flatMap((e) => e.paths));
 		if (sent.code === 3) {
 			const hits = new Set(sent.out.split('\n').filter((s) => s !== ''));
