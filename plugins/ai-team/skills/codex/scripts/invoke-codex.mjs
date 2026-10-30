@@ -238,20 +238,22 @@ function homeVariants() {
 // 守る場所：[{ label, loc }]。守る場所そのものがリンクなら、リンク先も入れる（リンク先を直接渡すとすり抜けるため）
 function protectedLocations() {
 	const out = [];
-	const add = (label, loc) => {
-		for (const v of pathVariants(loc)) out.push({ label, loc: v });
+	// codex：Codex の場所（ホームの .codex・CODEX_HOME）か。生成画像の例外で外すのは、この場所の守りだけ
+	const add = (label, loc, codex = false) => {
+		for (const v of pathVariants(loc)) out.push({ label, loc: v, codex });
 	};
 	for (const h of homeVariants()) {
-		for (const name of SENSITIVE_HOME_DIRS) add(`ホームの ${name}`, path.join(h, ...name.split('/')));
+		for (const name of SENSITIVE_HOME_DIRS) add(`ホームの ${name}`, path.join(h, ...name.split('/')), name === '.codex');
 	}
-	if ((process.env.CODEX_HOME || '').trim() !== '') add('CODEX_HOME の場所', path.resolve(process.env.CODEX_HOME));
+	if ((process.env.CODEX_HOME || '').trim() !== '') add('CODEX_HOME の場所', path.resolve(process.env.CODEX_HOME), true);
 	return out;
 }
 
-// p（そのもの・中）が守る場所に当たれば、その名前を返す（無ければ null）
-function sensitiveLocation(p) {
+// p（そのもの・中）が守る場所に当たれば、その名前を返す（無ければ null）。skipCodex なら、Codex の場所の守りだけ外す
+function sensitiveLocation(p, skipCodex = false) {
 	const candidates = pathVariants(p);
-	for (const { label, loc } of protectedLocations()) {
+	for (const { label, loc, codex } of protectedLocations()) {
+		if (skipCodex && codex) continue;
 		if (candidates.some((c) => sameCaseFolded(c, loc) || isUnderFolded(c, loc))) return label;
 	}
 	return null;
@@ -807,9 +809,10 @@ function main(cleanups, argv, deps) {
 	if (sendFiles.length > 0) {
 		// 守る場所（~/.codex/auth.json・~/.aws/credentials など）の中のファイルも送らない
 		for (const f of sendFiles) {
-			// 健さんが作った画像は、-Image に限って外す（前に作った画像を次の参照に使えるように）。下の秘密情報の照らしは通す
-			if (imageFiles.includes(f) && isGeneratedImage(f.real)) continue;
-			const where = sensitiveLocation(f.seen) ?? sensitiveLocation(f.real);
+			// 健さんが作った画像は、-Image に限って Codex の場所の守りだけ外す（前に作った画像を次の参照に使えるように）。
+			// ほかの守る場所（generated_images が ~/.ssh へのリンクのときなど）と、下の秘密情報の照らしは通す
+			const skipCodex = imageFiles.includes(f) && isGeneratedImage(f.real);
+			const where = sensitiveLocation(f.seen, skipCodex) ?? sensitiveLocation(f.real, skipCodex);
 			if (where !== null) stopWrapper(`頼みの文のファイル（または参照画像）が${where}の中にあるので、健さんに送りません: ${f.seen}`);
 		}
 		const entries = sendFiles.map((f) => ({ file: f.seen, paths: secretCandidates(f, checkRoots) }));

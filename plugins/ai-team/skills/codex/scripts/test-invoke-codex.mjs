@@ -1159,6 +1159,30 @@ if (!isWindows) {
 		const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', path.join(codexHome106, 'generated_images', 'x', 'a.png')], { extraEnv: genEnv });
 		return [stopped(r, sendWord), sendDetail(r)];
 	});
+	// generated_images がホームの .ssh へのリンク：外すのは Codex の場所の守りだけで、.ssh の守りは残る
+	{
+		const home106 = path.join(root, 'home-106-gen');
+		const codexHome106b = path.join(root, 'codex-home-106-genlink');
+		fs.mkdirSync(path.join(home106, '.ssh'), { recursive: true });
+		fs.mkdirSync(codexHome106b, { recursive: true });
+		fs.writeFileSync(path.join(home106, '.ssh', 'k.png'), 'x');
+		let linked = true;
+		try {
+			fs.symlinkSync(path.join(home106, '.ssh'), path.join(codexHome106b, 'generated_images'), isWindows ? 'junction' : 'dir');
+		} catch {
+			linked = false;
+		}
+		if (linked) {
+			sendCase('止まる: -Image が <CODEX_HOME>/generated_images/k.png（generated_images がホームの .ssh へのリンク。.ssh の守りは残る）', () => {
+				const ctx = makeRepo();
+				commitAll(ctx.git, 'init');
+				const r = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', promptFile, '-Image', path.join(codexHome106b, 'generated_images', 'k.png')], { extraEnv: { CODEX_HOME: codexHome106b, HOME: home106, USERPROFILE: home106 } });
+				return [stopped(r, sendWord) && r.stderr.includes('.ssh'), sendDetail(r)];
+			});
+		} else {
+			console.log('skip generated_images が .ssh へのリンクの確かめ（リンクを作れない環境）');
+		}
+	}
 }
 
 // 3. relOrAbs の大文字小文字のそろえ方（Mac の動きは、関数に fold を渡して確かめる）
