@@ -155,7 +155,8 @@ function commitAll(git, msg) {
 
 // consult の頼みの文
 const promptFile = path.join(root, 'prompt-consult.md');
-fs.writeFileSync(promptFile, '相談です\n');
+// 頼みの文の頭は「ガネーシャから」か「メジェドから」で始める決まり（無いとラッパーが止める）
+fs.writeFileSync(promptFile, 'ガネーシャから\n相談です\n');
 
 // workDir：作業の根（省略時は ctx.repo）。worktree から呼ぶときに指す
 // ラッパー（invoke-codex.mjs）を今の node で呼ぶ
@@ -638,7 +639,7 @@ try {
 	const dir = path.join(root, 'nogit');
 	fs.mkdirSync(dir, { recursive: true });
 	const prompt = path.join(root, 'prompt-image.md');
-	fs.writeFileSync(prompt, '画像を作って\n');
+	fs.writeFileSync(prompt, 'メジェドから\n画像を作って\n');
 	const img = path.join(root, 'ref-image.png');
 	fs.writeFileSync(img, 'x');
 	const mark = path.join(root, 'mark-image.txt');
@@ -768,6 +769,228 @@ function expectArgs(name, mode, base, expected) {
 expectArgs('review（-Base 無し）は未コミットの変更を read-only で見る', 'review', '', ['exec', 'review', '--uncommitted', '-c', 'sandbox_mode=read-only', '-o', '<out>']);
 expectArgs('review（-Base あり）は基準ブランチとの差分を read-only で見る', 'review', 'main', ['exec', 'review', '--base', 'main', '-c', 'sandbox_mode=read-only', '-o', '<out>']);
 expectArgs('consult は read-only で作業の根を読む', 'consult', '', ['exec', '--ephemeral', '--color', 'never', '--skip-git-repo-check', '-s', 'read-only', '-C', '<repo>', '-o', '<out>']);
+
+// ---- ラッパーが自分で読んで送るものと、git に渡す値の確かめ（#106） ----
+// ラッパーを呼ぶ（cwd は既定でリポジトリ。extraEnv は子プロセスだけに渡す）。本物の codex には届かない（PATH は buildEnv のまま）
+function runSend(ctx, args, { cwd = ctx.repo, extraEnv = {} } = {}) {
+	const r = spawnSync(process.execPath, [wrapper, ...args], { cwd, env: { ...ctx.env, ...extraEnv }, encoding: 'utf8' });
+	return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', called: fs.existsSync(ctx.mark) };
+}
+function sendCase(name, fn) {
+	try {
+		const [ok, info] = fn();
+		report(name, ok, info);
+	} catch (e) {
+		report(name, false, String(e.message));
+	}
+}
+const sendDetail = (r) => `(called=${r.called} code=${r.code} stderr=${r.stderr.trim().slice(0, 200)})`;
+const stopped = (r, word) => !r.called && r.code !== 0 && r.stderr.includes(word);
+const sendWord = '健さんに送りません';
+
+// 1. 頼みの文・参照画像のファイルを、送る前に秘密情報の照らしに通す
+sendCase('止まる: -PromptFile が .env（作業の根の中の秘密情報）', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	ctx.write('.env', 'ガネーシャから\nK=1\n');
+	const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', '.env']);
+	return [stopped(r, sendWord) && r.stderr.includes('.env'), sendDetail(r)];
+});
+
+sendCase('止まる: -PromptFile が作業の根の外の秘密情報の名前のファイル（.dev.vars）', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	const outside = path.join(root, `outside-send-${caseNo}`);
+	fs.mkdirSync(outside);
+	fs.writeFileSync(path.join(outside, '.dev.vars'), 'ガネーシャから\nS=1\n');
+	const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', path.join(outside, '.dev.vars')]);
+	return [stopped(r, sendWord), sendDetail(r)];
+});
+
+sendCase('止まる: -PromptFile が秘密情報へのリンク（見たままのパスは普通の名前。実体が .kv/ の下）', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	const secretDir = path.join(root, `link-target-${caseNo}`, '.kv');
+	fs.mkdirSync(secretDir, { recursive: true });
+	fs.writeFileSync(path.join(secretDir, 'p.md'), 'ガネーシャから\nS=1\n');
+	// フォルダへのリンク（Windows はジャンクションで、権限が要らない）
+	fs.symlinkSync(secretDir, path.join(ctx.repo, 'lnk'), isWindows ? 'junction' : 'dir');
+	const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', 'lnk/p.md']);
+	return [stopped(r, sendWord), sendDetail(r)];
+});
+
+sendCase('止まる: -Image に .kv/x.png（2枚目が秘密情報）', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	ctx.write('ok.png', 'x');
+	ctx.write('.kv/x.png', 'x');
+	const r = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', promptFile, '-Image', 'ok.png|.kv/x.png']);
+	return [stopped(r, sendWord) && r.stderr.includes('.kv'), sendDetail(r)];
+});
+
+sendCase('止まらない: 秘密情報でない -PromptFile・-Image（作業の根の中）', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	ctx.write('prompt.md', 'メジェドから\n相談です\n');
+	ctx.write('ok.png', 'x');
+	const a = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', 'prompt.md']);
+	const calledConsult = a.called;
+	fs.rmSync(ctx.mark, { force: true });
+	// image は偽物が IMAGE_PATH を書かないので、返事のあとに終了コード 2 で止まる（呼ぶところまで進んだかは印で見る）
+	const b = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', 'prompt.md', '-Image', 'ok.png']);
+	return [a.code === 0 && calledConsult && b.code === 2 && b.called, `${sendDetail(a)} ${sendDetail(b)}`];
+});
+
+// 2. -WorkingDirectory がホームの認証情報・設定の置き場所を指す。HOME・USERPROFILE は、この子プロセスだけを一時ディレクトリに向ける
+{
+	const home = path.join(root, 'home-106');
+	for (const d of ['.codex/sub', '.ssh', '.aws', '.gnupg', '.config/gh', '.claude', '.codexx', '.config/other']) fs.mkdirSync(path.join(home, ...d.split('/')), { recursive: true });
+	const homeEnv = { HOME: home, USERPROFILE: home, GIT_CEILING_DIRECTORIES: root };
+	for (const rel of ['.codex', '.codex/sub', '.ssh', '.aws', '.gnupg', '.config/gh', '.claude']) {
+		sendCase(`止まる: -WorkingDirectory がホームの ${rel}`, () => {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', path.join(home, ...rel.split('/'))], { extraEnv: homeEnv });
+			return [stopped(r, 'ホームの'), sendDetail(r)];
+		});
+	}
+	if (isWindows) {
+		sendCase('止まる: -WorkingDirectory がホームの .codex（大文字小文字を変えて指す。Windows）', () => {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', path.join(home, '.CODEX')], { extraEnv: homeEnv });
+			return [stopped(r, 'ホームの'), sendDetail(r)];
+		});
+	}
+	for (const rel of ['.codexx', '.config/other']) {
+		sendCase(`止まらない: -WorkingDirectory がホームの ${rel}（名前が似ているだけ）`, () => {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', path.join(home, ...rel.split('/'))], { extraEnv: homeEnv });
+			return [r.called && r.code === 0, sendDetail(r)];
+		});
+	}
+}
+
+// 3. -Base が - で始まる（git・codex にオプションとして渡る）
+sendCase('止まる: -Base --output=x', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	const r = runWrapper(ctx, '--output=x', 'review');
+	return [stopped(r, '基準ブランチの名前が - で始まっています'), sendDetail(r)];
+});
+
+// 4. 頼みの文の頭（最初の空でない行）
+{
+	let promptNo = 0;
+	const headerRun = (body, mode = 'consult', config) => {
+		const ctx = makeRepo();
+		if (config !== undefined) ctx.write('.claude/ai-team.json', config);
+		commitAll(ctx.git, 'init');
+		const file = path.join(root, `prompt-header-${++promptNo}.md`);
+		fs.writeFileSync(file, body);
+		const args = ['-Mode', mode, '-WorkingDirectory', ctx.repo, '-PromptFile', file];
+		if (mode === 'image') {
+			ctx.write('ref.png', 'x');
+			args.push('-Image', 'ref.png');
+		}
+		return runSend(ctx, args);
+	};
+	const headerWord = '頼みの文の頭';
+	sendCase('止まる: 頭の無い頼みの文（consult）', () => {
+		const r = headerRun('相談です\n');
+		return [stopped(r, headerWord), sendDetail(r)];
+	});
+	sendCase('止まる: 頭の無い頼みの文（image）', () => {
+		const r = headerRun('画像を作って\n', 'image');
+		return [stopped(r, headerWord), sendDetail(r)];
+	});
+	sendCase('止まる: 最初の空でない行が頭でない（2行目に「ガネーシャから」）', () => {
+		const r = headerRun('相談です\nガネーシャから\n');
+		return [stopped(r, headerWord), sendDetail(r)];
+	});
+	sendCase('止まる: 呼び名を変えていても、頭は既定の名前（names でガネーシャをアヤにしても「アヤから」は止まる）', () => {
+		const r = headerRun('アヤから\n相談です\n', 'consult', j({ secretPatterns: [], names: { ガネーシャ: 'アヤ' } }));
+		return [stopped(r, headerWord), sendDetail(r)];
+	});
+	sendCase('止まらない: 「メジェドから」で始まる頼みの文', () => {
+		const r = headerRun('メジェドから\n相談です\n');
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
+	sendCase('止まらない: 先頭に空行があっても、最初の空でない行が頭なら通る', () => {
+		const r = headerRun('\n  \nガネーシャから（相談）\n相談です\n');
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
+	sendCase('止まらない: 頭の前に BOM があっても通る', () => {
+		const r = headerRun(String.fromCharCode(0xfeff) + 'ガネーシャから\n相談です\n');
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
+}
+
+// 5. メインのチェックアウトの根（git worktree list）。git の呼び出しを偽物の git に差し替える確かめは、シェルのスクリプトが要るので Mac・Linux だけ
+if (!isWindows) {
+	const realGit = path.join(gitDir, 'git');
+	const fakeGit = (kind, body) => {
+		const dir = path.join(root, `fake-git-${kind}`);
+		fs.mkdirSync(dir, { recursive: true });
+		const file = path.join(dir, 'git');
+		fs.writeFileSync(file, `#!/bin/sh\ncase "$*" in\n*"worktree list"*)\n${body}\n;;\nesac\nexec "${realGit}" "$@"\n`);
+		fs.chmodSync(file, 0o755);
+		return dir;
+	};
+	const withFakeGit = (dir) => ({ PATH: `${dir}${path.delimiter}${buildEnv('').PATH}` });
+	sendCase('止まる: git worktree list が失敗する（リポジトリの中）', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { extraEnv: withFakeGit(fakeGit('fail', 'exit 1')) });
+		return [stopped(r, 'git worktree list が失敗'), sendDetail(r)];
+	});
+	sendCase('止まる: worktree list の1件目の場所がディレクトリでない', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { extraEnv: withFakeGit(fakeGit('nodir', "printf 'worktree /no/such/dir\\0\\0'")) });
+		return [stopped(r, 'ディレクトリではありません'), sendDetail(r)];
+	});
+	// 名前に改行・末尾の空白があるメインのチェックアウト：-z で読むので、そこの設定ファイル（.wrangler/ が秘密情報）も読める
+	for (const [label, dirName] of [['改行', 'main\nrepo'], ['末尾の空白', 'main-space ']]) {
+		sendCase(`止まる: メインのチェックアウトの名前に${label}があっても、worktree から呼ぶとメインの設定ファイルを読む`, () => {
+			const main = makeRepo(dirName);
+			commitAll(main.git, 'init');
+			const wt = path.join(root, `wt-name-${caseNo}`);
+			gitIn(main.repo, main.env, 'worktree', 'add', '-q', '-b', 'feature', wt);
+			fs.mkdirSync(path.join(main.repo, '.claude'), { recursive: true });
+			fs.writeFileSync(path.join(main.repo, '.claude', 'ai-team.json'), wrangler);
+			fs.mkdirSync(path.join(wt, '.wrangler'), { recursive: true });
+			fs.writeFileSync(path.join(wt, '.wrangler', 'state.json'), 's\n');
+			const r = runWrapper(main, '', 'review', wt);
+			return [!r.called && r.code !== 0 && r.stderr.includes('.wrangler/state.json'), sendDetail(r)];
+		});
+	}
+} else {
+	console.log('skip git worktree list の確かめ 4 つ（偽物の git はシェルのスクリプトなので、Mac・Linux だけ）');
+}
+
+// 6. PATH の相対の項目（.）は飛ばす：先頭に . があり、今いるフォルダに別の codex があっても、PATH の後ろの絶対パスの codex（テストの偽物）が選ばれる。
+// 今いるフォルダの codex は、偽物の印とは別の印だけを書く別の偽物（本物の codex には届かない。PATH の絶対の項目は buildEnv のまま）
+sendCase('止まらない: PATH の先頭が相対の項目（.）で、そこに別の codex があっても、PATH の後ろの codex（偽物）が選ばれる', () => {
+	const ctx = makeRepo();
+	commitAll(ctx.git, 'init');
+	const decoyDir = path.join(root, `decoy-${caseNo}`);
+	const decoyMark = path.join(root, `mark-decoy-${caseNo}.txt`);
+	const decoyJs = path.join(decoyDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+	fs.mkdirSync(path.dirname(decoyJs), { recursive: true });
+	fs.writeFileSync(decoyJs, `require('fs').writeFileSync(${JSON.stringify(decoyMark)}, 'decoy');\nprocess.exit(0);\n`);
+	fs.writeFileSync(path.join(path.dirname(decoyJs), 'package.json'), '{"type":"commonjs"}\n');
+	if (isWindows) {
+		fs.writeFileSync(path.join(decoyDir, 'codex.cmd'), `@"${process.execPath}" "%~dp0\node_modules\@openai\codex\bin\codex.js" %*\r\n`);
+	} else {
+		const shim = path.join(decoyDir, 'codex');
+		fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${decoyJs}" "$@"\n`);
+		fs.chmodSync(shim, 0o755);
+	}
+	const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: decoyDir, extraEnv: { PATH: ['.', ctx.env.PATH].join(path.delimiter) } });
+	return [r.code === 0 && r.called && !fs.existsSync(decoyMark), `${sendDetail(r)} decoy=${fs.existsSync(decoyMark)}`];
+});
 
 // ---- コンテナの中のレビュー（-Container。#99）。docker は偽物（本物の Docker も健さんも呼ばない） ----
 // 偽物の docker は、テストの一時ディレクトリに作る入口（container-entry.mjs）がラッパーを import して、run() に渡す。
@@ -995,7 +1218,7 @@ containerCase('通る：変更していない秘密情報（wp-config.php・.env
 containerCase('通る：名前が U+FEFF で始まる秘密情報も、写さない（共有モジュールの出力の1行目でも照合が外れない）', () => {
 	const ctx = makeContainerRepo();
 	ctx.write('.claude/ai-team.json', j({ secretPatterns: ['**/token.json'], container: { setup: 'npm ci', test: 'npm test' } }));
-	ctx.write('﻿k/token.json', '{}\n');
+	ctx.write(String.fromCharCode(0xfeff) + 'k/token.json', '{}\n');
 	commitAll(ctx.git, 'bom');
 	const r = runContainer(ctx);
 	const copied = listCopied(r.cpDir);
@@ -1347,7 +1570,7 @@ if (isWindows) {
 			const dir = path.join(root, 'nogit-ps1-image');
 			fs.mkdirSync(dir, { recursive: true });
 			const prompt = path.join(root, 'prompt-image-ps1.md');
-			fs.writeFileSync(prompt, '画像を作って\n');
+			fs.writeFileSync(prompt, 'メジェドから\n画像を作って\n');
 			const img = path.join(root, 'ref-image-ps1.png');
 			fs.writeFileSync(img, 'x');
 			const mark = path.join(root, 'mark-ps1-image.txt');

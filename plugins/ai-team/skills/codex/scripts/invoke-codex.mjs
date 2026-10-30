@@ -96,6 +96,8 @@ function parseArgs(argv) {
 	if (mode === undefined) stopWrapper(`-Mode は ${MODES.join('・')} のどれかにしてください: ${opts.Mode}`);
 	opts.Mode = mode;
 	if (opts.Container && mode !== 'review' && mode !== 'check') stopWrapper('-Container を付けられるのは review と check だけです。');
+	// 基準ブランチの名前は git・codex の引数としてそのまま渡る。- で始まると、オプション（--output=x など）として読まれるため止める
+	if (opts.Base.trim().startsWith('-')) stopWrapper(`基準ブランチの名前が - で始まっています: ${opts.Base}`);
 	// -Task は使わない（返事を保存していたころのタスク名）。古い呼び方（gh-skills の gh-pr など）で渡されても止めないよう、受け取って捨てる
 	return opts;
 }
@@ -106,8 +108,9 @@ function parseArgs(argv) {
 // .cmd を通したときの引数の引用の崩れも無い）。隣に無いシム（pnpm・bun などで入れた）は飛ばして PATH の後ろも探し、
 // 最後まで使えるものが無ければ、見つけたシムと直し方を出して止める。
 // Mac・Linux：PATH の codex をそのまま起動する。
+// どちらも、PATH の相対の項目（. など）は飛ばす（今いるフォルダに置かれた codex を拾って起動しないため。findDocker と同じ）。
 function findCodex() {
-	const dirs = (process.env.PATH || '').split(path.delimiter).filter((d) => d.trim() !== '');
+	const dirs = (process.env.PATH || '').split(path.delimiter).filter((d) => d.trim() !== '' && path.isAbsolute(d));
 	let skippedShim = null;
 	for (const dir of dirs) {
 		if (isWindows) {
@@ -163,18 +166,19 @@ function gitRaw(args, cwd) {
 }
 
 // メインのチェックアウト（worktree list の1件目）の根。worktree から呼ばれても、そこの設定ファイルも読むため。
-// 求められなければ（git が失敗・worktree でない）、作業の根のまま。
+// -z で読む（名前に改行・末尾の空白があっても崩れないように）。求められなければ、作業の根に黙って戻らず止める
+// （メインの根の設定ファイルを読み落とすため）。ただし Git のリポジトリでないフォルダ（consult は通す。#97）は、作業の根だけで進める
 function getMainRoot(repoRoot) {
-	const r = git(['-C', repoRoot, 'worktree', 'list', '--porcelain'], repoRoot);
-	if (r.code !== 0) return repoRoot;
-	for (const line of r.stdout.split(/\r?\n/)) {
-		const m = line.match(/^worktree (.+)$/);
-		if (m) {
-			const main = path.resolve(m[1].trim());
-			return isDirectory(main) ? main : repoRoot;
-		}
+	const r = git(['-C', repoRoot, 'worktree', 'list', '--porcelain', '-z'], repoRoot);
+	if (r.code !== 0) {
+		if (git(['-C', repoRoot, 'rev-parse', '--is-inside-work-tree'], repoRoot).code !== 0) return repoRoot;
+		stopWrapper(`メインのチェックアウトの場所を求められません（git worktree list が失敗しました）: ${repoRoot}`);
 	}
-	return repoRoot;
+	const first = r.stdout.split('\0').find((f) => f.startsWith('worktree '));
+	if (first === undefined) stopWrapper(`メインのチェックアウトの場所を求められません（git worktree list の出力を読めませんでした）: ${repoRoot}`);
+	const main = path.resolve(first.slice('worktree '.length));
+	if (!isDirectory(main)) stopWrapper(`メインのチェックアウトの場所がディレクトリではありません: ${main}`);
+	return main;
 }
 
 function isDirectory(p) {
@@ -182,6 +186,48 @@ function isDirectory(p) {
 		return fs.statSync(p).isDirectory();
 	} catch {
 		return false;
+	}
+}
+
+// 健さんが -WorkingDirectory の下を読めるので、認証情報や設定が入るホームの下の場所は指させない（そのもの・中のどちらも）。
+// 見たままのパスと、リンクをたどった実体のパスの両方を、ホーム（見たままと実体）の下の場所と比べる。返り値は当たった場所の名前（無ければ null）
+const SENSITIVE_HOME_DIRS = ['.codex', '.ssh', '.aws', '.gnupg', '.config/gh', '.claude'];
+function sensitiveHomeDir(dir) {
+	const home = os.homedir();
+	const homes = [path.resolve(home)];
+	const realHome = realOrNull(home);
+	if (realHome !== null) homes.push(realHome);
+	const dirs = [path.resolve(dir)];
+	const realDir = realOrNull(dir);
+	if (realDir !== null) dirs.push(realDir);
+	for (const h of homes) {
+		for (const name of SENSITIVE_HOME_DIRS) {
+			const loc = path.join(h, ...name.split('/'));
+			if (dirs.some((d) => sameLocation(d, loc) || isUnderLocation(d, loc + path.sep))) return name;
+		}
+	}
+	return null;
+}
+
+// 共有モジュールの check に渡すパス（リポジトリの根からの相対。区切りは /）。根の中なら相対パス、外なら絶対パス
+function relOrAbs(p, base) {
+	const withSep = base.endsWith(path.sep) ? base : base + path.sep;
+	return (isUnderLocation(p, withSep) ? p.slice(withSep.length) : p).replace(/\\/g, '/');
+}
+
+// 健さんに送るファイル（頼みの文・参照画像）を照らすパス。見たままのパスと、リンクをたどった実体のパスの両方
+function secretCandidates(file, repoRoot, realRoot) {
+	const seen = path.resolve(file);
+	return [relOrAbs(seen, repoRoot), relOrAbs(fs.realpathSync.native(seen), realRoot)];
+}
+
+// 頼みの文の頭（最初の空でない行）は、呼んだ人の名前で始める決まり（SKILL.md）。健さんの AGENTS.md は、この頭が無いと
+// 「まーちゅうが直接使うとき」として、範囲の制限と「秘密情報を開かない」を外す。呼び名（names）を変えていても、頭は既定の名前
+const PROMPT_SENDERS = ['ガネーシャから', 'メジェドから'];
+function checkPromptHeader(prompt) {
+	const first = prompt.split(/\r?\n/).find((l) => l.trim() !== '');
+	if (first === undefined || !PROMPT_SENDERS.some((s) => first.startsWith(s))) {
+		stopWrapper(`頼みの文の頭（最初の空でない行）が「${PROMPT_SENDERS.join('」か「')}」で始まっていません。この頭が無いと、健さんの決まりのうち範囲の制限と「秘密情報を開かない」が外れるため、呼びません。`);
 	}
 }
 
@@ -250,7 +296,8 @@ const SWAPPED_REPO = 97;
 // 名前に入っていたら止める文字（制御文字・U+2028・U+2029）
 const BAD_NAME = /[\u0000-\u001f\u007f\u2028\u2029]/;
 
-// docker を PATH から絶対パスで探す（Windows は、名前だけで起動するとカレントディレクトリの docker.exe を先に拾うため）。無ければ null
+// docker を PATH から探し、見つけた場所を確かめて、その絶対パスで起動する（名前だけで起動すると、どこの docker かを確かめられないため。
+// PATH の相対の項目は飛ばす）。無ければ null
 function findDocker() {
 	const name = isWindows ? 'docker.exe' : 'docker';
 	for (const dir of (process.env.PATH || '').split(path.delimiter).filter((d) => d.trim() !== '' && path.isAbsolute(d))) {
@@ -570,6 +617,8 @@ function main(cleanups, argv, deps) {
 	const callerDirectory = process.cwd();
 	const workingDirectory = opts.WorkingDirectory.trim() === '' ? callerDirectory : opts.WorkingDirectory;
 	if (!isDirectory(workingDirectory)) stopWrapper(`作業の根が見つかりません: ${workingDirectory}`);
+	const sensitive = sensitiveHomeDir(workingDirectory);
+	if (sensitive !== null) stopWrapper(`作業の根がホームの ${sensitive} の中を指しています（認証情報や設定が入る場所を、健さんに読ませません）: ${workingDirectory}`);
 	let repoRoot = path.resolve(workingDirectory);
 	if (opts.Container) {
 		// 写しと差分は、-WorkingDirectory によらず、リポジトリの根から作る
@@ -578,11 +627,22 @@ function main(cleanups, argv, deps) {
 		repoRoot = path.resolve(top.stdout.trim());
 	}
 
-	let prompt = '';
+	// 健さんに送るファイル（頼みの文・参照画像）。見つかるかをここで確かめ、中身は秘密情報の確認の後で読む
+	let promptPath = '';
+	const imageFiles = [];
 	if (mode !== 'review' && mode !== 'check') {
 		if (opts.PromptFile.trim() === '' || !isFile(opts.PromptFile)) stopWrapper(`頼みの文のファイル（-PromptFile）が見つかりません: ${opts.PromptFile}`);
-		prompt = readUtf8(path.resolve(opts.PromptFile));
-		if (prompt.trim() === '') stopWrapper('頼みの文が空です。');
+		promptPath = path.resolve(opts.PromptFile);
+	}
+	if (mode === 'image') {
+		for (const raw of opts.Image.split('|')) {
+			const src = raw.trim();
+			if (src === '') continue;
+			const full = path.isAbsolute(src) ? src : path.join(callerDirectory, src);
+			if (!isFile(full)) stopWrapper(`参照画像が見つかりません: ${src}`);
+			imageFiles.push(full);
+		}
+		if (imageFiles.length === 0) stopWrapper('image には参照画像（-Image）を1枚以上渡してください。');
 	}
 
 	// ---- 設定ファイルと秘密情報の確認 ----
@@ -642,6 +702,30 @@ function main(cleanups, argv, deps) {
 	// 終了コード 0 でも、共有モジュールが印を書いていなければ、確かめが済んだか分からない（リンク経由の起動で何もせずに終わった場合など）
 	if (checkOut.split('\n')[0].trim() !== 'ai-team-config: ok') {
 		stopWrapper('秘密情報と設定ファイルの確かめが済んだか分からないので、健さんを呼びません（共有モジュールが印を返しませんでした）。');
+	}
+
+	// 健さんに送るファイル（頼みの文・参照画像）も、送る前に同じ照らしに通す。見たままのパスと実体のパスのどちらかが秘密情報なら止める
+	// （リンクで秘密情報を指させないため）。中身はまだ読んでいない
+	const sendFiles = [promptPath, ...imageFiles].filter((p) => p !== '');
+	if (sendFiles.length > 0) {
+		const realRoot = fs.realpathSync.native(repoRoot);
+		const entries = sendFiles.map((file) => ({ file, paths: secretCandidates(file, repoRoot, realRoot) }));
+		const sent = runConfigCheck(configModule, checkRoots, entries.flatMap((e) => e.paths));
+		if (sent.code === 3) {
+			const hits = new Set(sent.out.split('\n').filter((s) => s !== ''));
+			const hitFiles = entries.filter((e) => e.paths.some((p) => hits.has(p))).map((e) => e.file);
+			stopWrapper(`頼みの文のファイル（または参照画像）が秘密情報なので、健さんに送りません: ${(hitFiles.length > 0 ? hitFiles : sendFiles).join(', ')}`);
+		}
+		if (sent.code !== 0 || sent.out.split('\n')[0].trim() !== 'ai-team-config: ok') {
+			stopWrapper('頼みの文・参照画像の秘密情報の確かめが済んだか分からないので、健さんを呼びません。');
+		}
+	}
+
+	let prompt = '';
+	if (promptPath !== '') {
+		prompt = readUtf8(promptPath);
+		if (prompt.trim() === '') stopWrapper('頼みの文が空です。');
+		checkPromptHeader(prompt);
 	}
 
 	// ---- -Container：コンテナの中で健さんを動かす（#99） ----
@@ -718,16 +802,11 @@ function main(cleanups, argv, deps) {
 		}
 
 		case 'image': {
-			if (opts.Image.trim() === '') stopWrapper('image には参照画像（-Image）を1枚以上渡してください。');
-			// 参照画像は安全な名前でコピーし、このディレクトリに移動してから名前だけを渡す
+			// 参照画像（imageFiles。見つかるかと秘密情報の確認は済んでいる）は安全な名前でコピーし、このディレクトリに移動してから名前だけを渡す
 			// （Codex の -i は値をカンマで分けるので、元の名前や親のパスにカンマがあると割れる）
 			const refs = [];
 			let i = 0;
-			for (const raw of opts.Image.split('|')) {
-				const src = raw.trim();
-				if (src === '') continue;
-				const full = path.isAbsolute(src) ? src : path.join(callerDirectory, src);
-				if (!isFile(full)) stopWrapper(`参照画像が見つかりません: ${src}`);
+			for (const full of imageFiles) {
 				// 元のファイルの場所を控える（前に作った画像を参照に渡したとき、それを今回の出力と取り違えないため）
 				refOriginals.push(path.resolve(full));
 				i++;
