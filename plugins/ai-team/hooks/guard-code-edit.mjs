@@ -117,8 +117,10 @@ function configRoots(projectDir, cwd, specified) {
 	const own = look(projectDir);
 	if (own !== null) add(own.main);
 	if (typeof cwd === 'string' && cwd !== '') {
-		const here = look(cwd);
-		if (here !== null && own !== null && own.main !== null && here.main !== null && normalize(here.main) === normalize(own.main)) {
+		// cwd の .git が壊れているときは、同じリポジトリか分からないので、止めずに cwd の根を読まないだけにする
+		// （cwd がプロジェクトの中なら、プロジェクトの根・編集先の根で見ている）
+		const here = gitRoots(cwd);
+		if (here !== null && !here.broken && own !== null && own.main !== null && here.main !== null && normalize(here.main) === normalize(own.main)) {
 			add(here.root);
 			add(here.main);
 		}
@@ -206,7 +208,10 @@ function main() {
 
 	const broken = loaded.find((l) => l.status === 'broken');
 	if (broken) {
-		block(`guard-code-edit: 設定ファイル ${broken.file} を読めないので編集を止めました（${broken.reason}）。先にそのファイルを直してください。`);
+		const fixHint = isInside(broken.file, projectDir)
+			? '先にそのファイルを直してください。'
+			: 'プロジェクトの外にあるので、このセッションからは直せません。手で直してください。';
+		block(`guard-code-edit: 設定ファイル ${broken.file} を読めないので編集を止めました（${broken.reason}）。${fixHint}`);
 	}
 
 	if (real === null) {

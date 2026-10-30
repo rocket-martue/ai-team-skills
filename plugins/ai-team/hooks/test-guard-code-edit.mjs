@@ -248,6 +248,10 @@ try {
 			runAt('cwd だけが worktree: worktree の設定の secretPatterns も効く', { file: path.join(wt, 'wt-only', 'a'), proj: mainDir, cwd: wt }, 2);
 			runAt('cwd だけが worktree: コードは通る', { file: path.join(mainDir, 'src', 'a.js'), proj: mainDir, cwd: wt }, 0);
 			runAt('cwd が関係ないリポジトリなら、その壊れた設定は読まない（編集は通る）', { file: path.join(mainDir, 'src', 'a.js'), proj: mainDir, cwd: other }, 0);
+			const junk = path.join(sandbox, 'cwd-junk');
+			mkdirSync(junk, { recursive: true });
+			writeFileSync(path.join(junk, '.git'), 'not a gitdir line');
+			runAt('cwd が関係ないフォルダで、その .git に gitdir: の行が無くても、プロジェクトの編集は止まらない', { file: path.join(mainDir, 'src', 'a.js'), proj: mainDir, cwd: junk }, 0);
 		}
 
 		// .claude/ai-team.json がある根の repo-files/claude/ai-team.json は、実際に読む設定ではないので、設定が壊れているとき止まる
