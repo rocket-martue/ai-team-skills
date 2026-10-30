@@ -5,7 +5,7 @@
 // git は呼ばない。依存なし。
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +120,227 @@ try {
 	run('外: ~/.claude/skills/ は止まる', { file: path.join(homedir(), '.claude', 'skills', 's', 'SKILL.md') }, 2);
 	run('外: scratchpad の中でも .env は止まる', { file: path.join(tmpdir(), 'claude', '.env') }, 2);
 	runRaw('JSON でない入力は止まる', 'not json', 2);
+	// 思わぬ形の入力は止まる（例外で終了コード 1 になると、Claude Code は編集を通すため。#108）
+	runRaw('入力が JSON の null なら止まる', 'null', 2);
+	runRaw('入力が配列なら止まる', '[]', 2);
+	runRaw('tool_input が null なら止まる', JSON.stringify({ tool_name: 'Edit', tool_input: null }), 2);
+	runRaw('tool_input が文字列なら止まる', JSON.stringify({ tool_name: 'Edit', tool_input: 'x' }), 2);
+	runRaw('file_path が文字列でなければ止まる', JSON.stringify({ tool_name: 'Write', tool_input: { file_path: 123 } }), 2);
+	runRaw('file_path が無ければ止まる（編集先が無い）', JSON.stringify({ tool_name: 'Edit', tool_input: {} }), 2);
+	runRaw('file_path が空文字なら止まる', JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: '' } }), 2);
+	runRaw('tool_input が無ければ止まる', JSON.stringify({ tool_name: 'Edit' }), 2);
+
+	// ---- 設定を読む根（#108。ラッパーと同じく、作業の根とメインのチェックアウトの根の両方を読む） ----
+	// git は呼ばないので、worktree の .git（gitdir: と commondir）は手で作る
+	{
+		const mainRepo = path.join(sandbox, 'roots-main');
+		const linked = path.join(sandbox, 'roots-linked');
+		const child = path.join(mainRepo, '.claude', 'worktrees', 'c');
+		const makeWorktree = (dir, name) => {
+			mkdirSync(path.join(mainRepo, '.git', 'worktrees', name), { recursive: true });
+			writeFileSync(path.join(mainRepo, '.git', 'worktrees', name, 'commondir'), '../..\n');
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(path.join(dir, '.git'), `gitdir: ${path.join(mainRepo, '.git', 'worktrees', name)}\n`);
+		};
+		mkdirSync(path.join(mainRepo, '.git'), { recursive: true });
+		mkdirSync(path.join(mainRepo, '.claude'), { recursive: true });
+		writeFileSync(path.join(mainRepo, '.claude', 'ai-team.json'), JSON.stringify({ secretPatterns: ['private/**'] }));
+		makeWorktree(linked, 'linked');
+		makeWorktree(child, 'c');
+		mkdirSync(path.join(child, '.claude'), { recursive: true });
+		writeFileSync(path.join(child, '.claude', 'ai-team.json'), JSON.stringify({ secretPatterns: ['only-child/**'] }));
+
+		const runIn = (name, { file, proj, cwd = proj }, expected) => {
+			const result = spawnSync(process.execPath, [hook], {
+				input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: file }, cwd }),
+				env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
+				encoding: 'utf8',
+			});
+			judgeResult(name, result, expected);
+		};
+		runIn('根: メインで足した secretPatterns は、メインで止まる', { file: path.join(mainRepo, 'private', 'a.json'), proj: mainRepo }, 2);
+		runIn('根: 設定の無い worktree で始めたセッションでも、メインで足した secretPatterns で止まる', { file: path.join(linked, 'private', 'a.json'), proj: linked }, 2);
+		runIn('根: 設定の無い worktree のコードは通る', { file: path.join(linked, 'src', 'a.js'), proj: linked }, 0);
+		runIn('根: メインから、.claude/worktrees/ の中の worktree にだけある secretPatterns で止まる', { file: path.join(child, 'only-child', 'a.json'), proj: mainRepo }, 2);
+		runIn('根: メインから、.claude/worktrees/ の中の worktree のコードは通る', { file: path.join(child, 'src', 'a.js'), proj: mainRepo }, 0);
+
+		// テンプレートのリポジトリ（repo-files/claude/ai-team.json だけ）でも、そこの secretPatterns が効く。壊れていても、そのファイルは直せる
+		const tmpl = path.join(sandbox, 'roots-template');
+		mkdirSync(path.join(tmpl, 'repo-files', 'claude'), { recursive: true });
+		const tmplConfig = path.join(tmpl, 'repo-files', 'claude', 'ai-team.json');
+		writeFileSync(tmplConfig, JSON.stringify({ secretPatterns: ['tmpl-secret/**'] }));
+		runIn('根: repo-files/claude/ai-team.json の secretPatterns も効く', { file: path.join(tmpl, 'tmpl-secret', 'a'), proj: tmpl }, 2);
+		writeFileSync(tmplConfig, '{ broken');
+		runIn('根: repo-files/claude/ai-team.json が壊れていれば、ほかの編集は止まる', { file: path.join(tmpl, 'src', 'a.js'), proj: tmpl }, 2);
+		runIn('根: repo-files/claude/ai-team.json が壊れていても、そのファイルは直せる', { file: tmplConfig, proj: tmpl }, 0);
+	}
+
+	// ---- 設定を読む根の絞り込み（#108 の1巡目の指摘） ----
+	{
+		const mkMain = (dir) => {
+			mkdirSync(path.join(dir, '.git'), { recursive: true });
+			mkdirSync(path.join(dir, '.claude'), { recursive: true });
+		};
+		const linkWorktree = (mainDir, dir, name) => {
+			mkdirSync(path.join(mainDir, '.git', 'worktrees', name), { recursive: true });
+			writeFileSync(path.join(mainDir, '.git', 'worktrees', name, 'commondir'), '../..\n');
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(path.join(dir, '.git'), `gitdir: ${path.join(mainDir, '.git', 'worktrees', name)}\n`);
+		};
+		const runAt = (name, { file, proj, cwd = proj }, expected) => {
+			const result = spawnSync(process.execPath, [hook], {
+				input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: file }, cwd }),
+				env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
+				encoding: 'utf8',
+			});
+			judgeResult(name, result, expected);
+		};
+		const cfgOf = (dir) => path.join(dir, '.claude', 'ai-team.json');
+
+		// 細工した .git（commondir が外を指す）：外の設定ファイルは、読むだけで、編集は止まる
+		{
+			const forge = path.join(sandbox, 'forge');
+			const sub = path.join(forge, 'sub');
+			const victim = path.join(sandbox, 'victim');
+			mkMain(victim);
+			writeFileSync(cfgOf(victim), JSON.stringify({ secretPatterns: ['x/**'] }));
+			mkdirSync(path.join(sub, 'g'), { recursive: true });
+			writeFileSync(path.join(sub, '.git'), 'gitdir: ./g\n');
+			writeFileSync(path.join(sub, 'g', 'commondir'), `${path.relative(path.join(sub, 'g'), path.join(victim, '.git'))}\n`);
+			runAt('細工した .git: 外の設定ファイルの編集は止まる', { file: cfgOf(victim), proj: sub }, 2);
+			runAt('細工した .git: 外の設定は読むので、そこの secretPatterns は効く', { file: path.join(sub, 'x', 'a'), proj: sub }, 2);
+		}
+
+		// 設定が壊れているときの止める文：プロジェクトの中なら「直してください」、外なら「このセッションからは直せません」
+		{
+			const stderrAt = (file, proj) =>
+				spawnSync(process.execPath, [hook], {
+					input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: file }, cwd: proj }),
+					env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
+					encoding: 'utf8',
+				});
+			const inDir = path.join(sandbox, 'hint-in');
+			mkMain(inDir);
+			writeFileSync(cfgOf(inDir), '{ broken');
+			const rIn = stderrAt(path.join(inDir, 'src', 'a.js'), inDir);
+			check('壊れた設定がプロジェクトの中: 止める文に「先にそのファイルを直してください」が出る', rIn.status === 2 && rIn.stderr.includes('先にそのファイルを直してください。') && !rIn.stderr.includes('このセッションからは直せません'));
+
+			const forge2 = path.join(sandbox, 'hint-forge', 'sub');
+			const victim2 = path.join(sandbox, 'hint-victim');
+			mkMain(victim2);
+			writeFileSync(cfgOf(victim2), '{ broken');
+			mkdirSync(path.join(forge2, 'g'), { recursive: true });
+			writeFileSync(path.join(forge2, '.git'), 'gitdir: ./g\n');
+			writeFileSync(path.join(forge2, 'g', 'commondir'), `${path.relative(path.join(forge2, 'g'), path.join(victim2, '.git'))}\n`);
+			const rOut = stderrAt(path.join(forge2, 'src', 'a.js'), forge2);
+			check('壊れた設定がプロジェクトの外: 止める文に「このセッションからは直せません」が出る', rOut.status === 2 && rOut.stderr.includes('このセッションからは直せません') && !rOut.stderr.includes('先にそのファイルを直してください'));
+		}
+
+		// リンクの実体が入れ子のリポジトリの中：指定のパスは外のリポジトリの中でも、実体の側の設定の secretPatterns で止まる
+		{
+			const outer = path.join(sandbox, 'alias-outer');
+			const lib = path.join(outer, 'packages', 'lib');
+			mkMain(outer);
+			mkMain(lib);
+			writeFileSync(cfgOf(lib), JSON.stringify({ secretPatterns: ['private/**'] }));
+			mkdirSync(path.join(lib, 'private'), { recursive: true });
+			writeFileSync(path.join(lib, 'private', 'token.json'), '{}');
+			if (trySymlink(path.join(lib, 'private', 'token.json'), path.join(outer, 'alias.json'), 'file')) {
+				runAt('入れ子のリポジトリへのリンク: 実体が中の secretPatterns に当たれば止まる', { file: path.join(outer, 'alias.json'), proj: outer }, 2);
+			} else {
+				console.log('skip 入れ子のリポジトリへのリンクの確かめ（シンボリックリンクを作れない環境）');
+			}
+		}
+
+		// .kv の名前の worktree の設定ファイルは止まる（.kv/ は秘密情報）
+		{
+			const mainDir = path.join(sandbox, 'kv-main');
+			const kvWt = path.join(mainDir, '.claude', 'worktrees', '.kv');
+			mkMain(mainDir);
+			linkWorktree(mainDir, kvWt, 'kv');
+			mkdirSync(path.join(kvWt, '.claude'), { recursive: true });
+			writeFileSync(cfgOf(kvWt), JSON.stringify({}));
+			runAt('.kv の名前の worktree の設定ファイルの編集は止まる', { file: cfgOf(kvWt), proj: mainDir }, 2);
+		}
+
+		// 入れ子のリポジトリ（.claude/worktrees/ の外）の secretPatterns は、そのリポジトリの根からの相対パスで効く
+		{
+			const outer = path.join(sandbox, 'nest-outer');
+			const lib = path.join(outer, 'packages', 'lib');
+			mkMain(outer);
+			mkMain(lib);
+			writeFileSync(cfgOf(lib), JSON.stringify({ secretPatterns: ['private/**'] }));
+			runAt('入れ子のリポジトリ: 中の設定の secretPatterns で止まる', { file: path.join(lib, 'private', 'a.json'), proj: outer }, 2);
+			runAt('入れ子のリポジトリ: 中のコードは通る', { file: path.join(lib, 'src', 'a.js'), proj: outer }, 0);
+			runAt('入れ子のリポジトリ: 外のリポジトリの同じ名前のフォルダは止まらない', { file: path.join(outer, 'private', 'a.json'), proj: outer }, 0);
+		}
+
+		// cwd だけが worktree を指す（CLAUDE_PROJECT_DIR はメイン）：その worktree の設定も読む。関係ないリポジトリの壊れた設定は読まない
+		{
+			const mainDir = path.join(sandbox, 'cwd-main');
+			const wt = path.join(sandbox, 'cwd-linked');
+			const other = path.join(sandbox, 'cwd-other');
+			mkMain(mainDir);
+			linkWorktree(mainDir, wt, 'w');
+			mkdirSync(path.join(wt, '.claude'), { recursive: true });
+			writeFileSync(cfgOf(wt), JSON.stringify({ secretPatterns: ['wt-only/**'] }));
+			mkMain(other);
+			writeFileSync(cfgOf(other), '{ broken');
+			runAt('cwd だけが worktree: worktree の設定の secretPatterns も効く', { file: path.join(wt, 'wt-only', 'a'), proj: mainDir, cwd: wt }, 2);
+			runAt('cwd だけが worktree: コードは通る', { file: path.join(mainDir, 'src', 'a.js'), proj: mainDir, cwd: wt }, 0);
+			runAt('cwd が関係ないリポジトリなら、その壊れた設定は読まない（編集は通る）', { file: path.join(mainDir, 'src', 'a.js'), proj: mainDir, cwd: other }, 0);
+			const junk = path.join(sandbox, 'cwd-junk');
+			mkdirSync(junk, { recursive: true });
+			writeFileSync(path.join(junk, '.git'), 'not a gitdir line');
+			runAt('cwd が関係ないフォルダで、その .git に gitdir: の行が無くても、プロジェクトの編集は止まらない', { file: path.join(mainDir, 'src', 'a.js'), proj: mainDir, cwd: junk }, 0);
+		}
+
+		// .claude/ai-team.json がある根の repo-files/claude/ai-team.json は、実際に読む設定ではないので、設定が壊れているとき止まる
+		{
+			const dir = path.join(sandbox, 'two-configs');
+			mkdirSync(path.join(dir, '.claude'), { recursive: true });
+			mkdirSync(path.join(dir, 'repo-files', 'claude'), { recursive: true });
+			writeFileSync(cfgOf(dir), '{ broken');
+			const tmplCfg = path.join(dir, 'repo-files', 'claude', 'ai-team.json');
+			writeFileSync(tmplCfg, JSON.stringify({}));
+			runAt('両方ある根: 読んでいる .claude/ai-team.json は壊れていても直せる', { file: cfgOf(dir), proj: dir }, 0);
+			runAt('両方ある根: 読んでいない repo-files/claude/ai-team.json は、設定が壊れていれば止まる', { file: tmplCfg, proj: dir }, 2);
+		}
+
+		// .git が読めない・gitdir: の行が無いときは止まる。commondir が無いだけ（サブモジュールの形）なら通る
+		{
+			const noLine = path.join(sandbox, 'git-noline');
+			mkdirSync(noLine, { recursive: true });
+			writeFileSync(path.join(noLine, '.git'), 'not a gitdir line\n');
+			runAt('.git に gitdir: の行が無ければ止まる', { file: path.join(noLine, 'src', 'a.js'), proj: noLine }, 2);
+
+			const subm = path.join(sandbox, 'git-submodule');
+			mkdirSync(path.join(subm, 'g'), { recursive: true });
+			writeFileSync(path.join(subm, '.git'), 'gitdir: ./g\n');
+			runAt('commondir が無いだけ（サブモジュールの形）なら、通る', { file: path.join(subm, 'src', 'a.js'), proj: subm }, 0);
+
+			// .git が読めない（アクセス権）：作れる OS だけ（Windows と root では作れない）
+			const locked = path.join(sandbox, 'git-locked');
+			mkdirSync(locked, { recursive: true });
+			const lockedGit = path.join(locked, '.git');
+			writeFileSync(lockedGit, 'gitdir: ./g\n');
+			let canLock = false;
+			if (process.platform !== 'win32') {
+				chmodSync(lockedGit, 0o000);
+				try {
+					readFileSync(lockedGit);
+				} catch {
+					canLock = true;
+				}
+			}
+			if (canLock) {
+				runAt('.git が読めない（アクセス権）なら止まる', { file: path.join(locked, 'src', 'a.js'), proj: locked }, 2);
+				chmodSync(lockedGit, 0o600);
+			} else {
+				console.log('skip .git が読めないときの確かめ（アクセス権を作れない OS か、root で実行）');
+			}
+		}
+	}
 
 	// ---- worktree・境界 ----
 	run('入れ子の worktree: コードは通る', { file: p(...WT2.split('/'), 'src', 'a.php') }, 0);
@@ -407,6 +628,10 @@ try {
 				e.matcher === undefined &&
 				(e.hooks || []).some((h) => h.command === 'node' && (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs')
 		)
+	);
+	check(
+		'hooks.json のガードは onFailure が block（起動できない・タイムアウト・終了コード 2 以外でも編集を止める。#108）',
+		(pluginHooks.PreToolUse || []).some((e) => (e.hooks || []).some((h) => (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs' && h.onFailure === 'block'))
 	);
 	check(
 		'hooks.json に登録されているのは PreToolUse と SessionStart だけ',

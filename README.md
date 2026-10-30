@@ -13,9 +13,17 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 
 ## 前提
 
+最低要件（これより古い版は扱わない）：
+
+| もの | 版 | 理由 |
+| --- | --- | --- |
+| Node.js | 22 以降 | フックとラッパーを動かす（20 は 2026年4月にサポートが終わった） |
+| Git | 2.36 以降 | ラッパーが `git worktree list --porcelain -z` で worktree を読む（#106 から） |
+| Claude Code | 2.1.295 以降 | 編集のガードの `onFailure: "block"` が効く |
+
 - 日本語で進める WordPress（PHP、phpcs）の案件向け。ほかの技術スタックでは、リポジトリの `docs/team/common-rules.md` と `.claude/settings.json` の allow を書き換える
 - Claude Code（VS Code の拡張か CLI）で使う。Cursor でも、Claude Code の拡張（か Cursor のターミナルで打つ `claude`）なら同じように動く。Cursor 自体のチャット・Agent では、モデルに Claude を選んでも動かない（プラグイン・フック・エージェントは Claude Code の仕組みのため）
-- フックに Node.js が要る（node が PATH に無いと、フックは何も言わずに外れる）
+- フックに Node.js が要る。編集のガードは、node が PATH に無い・途中で失敗した・時間切れのときも編集を止める（`onFailure: "block"`）
 - マーケットプレイスの登録に git が要る（GitHub から clone するため）
 - 入れるフォルダは git のリポジトリでなくてもよい（ガードとフックは、開いたフォルダを根として見る）。ただし、差分を使うもの（健さんのレビュー・藤さんに比べるブランチで見てもらう・純ちゃん・コミットと PR）は使えない。健さんへの相談と画像の生成は使える。そのときは「使うリポジトリごと」の 6 を飛ばす。「入ったかを確かめる」の 2 の `git fetch origin` は失敗する（`not a git repository`）が、確認のダイアログが出なければ allow は効いている
 - 健さんは使わなくても回る。使うときは、各 PC に Codex CLI と健さんの AGENTS.md が要る（健さんにテストも打たせる「コンテナでのレビュー」を使うなら、Docker も）。ラッパーは Node.js で書いてあり、Windows・Mac・Linux で動く（Mac は、テストを Linux で通しただけで、実機ではまだ確かめていない）
@@ -272,7 +280,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 | `docs/team/Ganesha.md`・`docs/team/common-rules.md` | リポジトリの `docs/team/`。common-rules.md はリポジトリ固有の決まり（コーディング・チェックコマンド） |
 | `CLAUDE.md.snippet` | 中身を `CLAUDE.md` の先頭に足す |
 | `claude/settings.json` | `.claude/settings.json`。読むだけの git・gh と健さんのラッパーの allow、秘密情報の Read と `git checkout`・`merge`・`rebase`・`reset`・`gh pr merge` の deny（Bash と PowerShell の両方） |
-| `claude/ai-team.json` | `.claude/ai-team.json`。秘密情報のパターンの追加（`secretPatterns`。グロブ。既定の4つ `.env*`・`.dev.vars`・`.kv/`・`wp-config.php` は外せない）と、呼び名の対応（`names`。上の「呼び名を変える」）。ガードとラッパーと SessionStart のフックが読む。壊れていると、ガードは設定ファイルのほかの編集を全部止め、ラッパーは健さんを呼ばない。知らないキーは読み捨てる。ただし、知っているキーの打ち間違いに見えるキー（記号を除いて小文字にそろえたら同じ、か、2文字以内の違い。例：`secretPattern`・`secret_patterns`・`Names`）は、秘密情報の守りが黙って消えないよう、壊れている扱い |
+| `claude/ai-team.json` | `.claude/ai-team.json`。秘密情報のパターンの追加（`secretPatterns`。グロブ。既定の4つ `.env*`・`.dev.vars`・`.kv/`・`wp-config.php` は外せない）と、呼び名の対応（`names`。上の「呼び名を変える」）。ガードとラッパーと SessionStart のフックが読む。ガードが設定を読む根は、プロジェクトの根・そのメインのチェックアウトの根・編集先が入っている git の根（`.claude/worktrees/<名前>/` の中など。そのメインの根も）・フックの cwd の git の根（メインの根が同じときだけ）で、根ごとに `.claude/ai-team.json`、無ければ `repo-files/claude/ai-team.json`（テンプレートのリポジトリ）を読む。`secretPatterns` は全部を合わせ、プロジェクトの根からの相対パスと、そのパターンを書いた設定の根からの相対パス（入れ子のリポジトリ用）の両方に当てる。`.git`（プロジェクトや編集先から上へたどって見つかる祖先のフォルダのものも含む）を読めないときも止める。壊れていると、ガードは設定ファイルのほかの編集を全部止め、ラッパーは健さんを呼ばない。知らないキーは読み捨てる。ただし、知っているキーの打ち間違いに見えるキー（記号を除いて小文字にそろえたら同じ、か、2文字以内の違い。例：`secretPattern`・`secret_patterns`・`Names`）は、秘密情報の守りが黙って消えないよう、壊れている扱い |
 | `codex/AGENTS.md` | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲 |
 | `gitignore.snippet` | `.gitignore` に足す行 |
 

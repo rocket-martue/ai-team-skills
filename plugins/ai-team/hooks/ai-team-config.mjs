@@ -90,6 +90,68 @@ export function realPath(p) {
 	}
 }
 
+// dir を含む git の作業ツリーの根と、そのメインのチェックアウトの根を返す（設定ファイルを読む根を集めるため。#108）。
+// git を起こさずに .git から求める（ガードは編集のたびに走るため）。
+// - .git がディレクトリ：その場所が根で、メインも同じ
+// - .git がファイル（worktree）：`gitdir: <パス>` の先の commondir から、共通の .git を求め、その親をメインとする
+// 見つからなければ null。メインを求められなければ main は null（サブモジュールの形など、commondir が無いだけのときはこれ。呼び出し側は、メインは無いとして進める）。
+// .git のファイルや commondir を読めない（アクセス権など）・gitdir: の行が無いときは、メインが無いのとは区別して broken を真にする（呼び出し側で止める）。
+export function gitRoots(dir) {
+	let current = path.resolve(dir);
+
+	for (;;) {
+		const dotGit = path.join(current, '.git');
+		let st = null;
+
+		try {
+			st = lstatSync(dotGit);
+		} catch (e) {
+			// 無いことを示すもの（ENOENT・ENOTDIR）だけを「無い」とする。アクセス権などで調べられないときは、黙って飛ばさず broken にする。
+			if (!(e && (e.code === 'ENOENT' || e.code === 'ENOTDIR'))) {
+				return { root: current, main: null, broken: true };
+			}
+		}
+
+		if (st !== null && st.isDirectory()) {
+			return { root: current, main: current, broken: false };
+		}
+
+		if (st !== null && st.isFile()) {
+			let m;
+			let gitDir;
+
+			try {
+				m = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+?)\s*$/m);
+			} catch {
+				return { root: current, main: null, broken: true };
+			}
+
+			if (m === null) {
+				return { root: current, main: null, broken: true };
+			}
+
+			gitDir = path.resolve(current, m[1]);
+
+			try {
+				const common = path.resolve(gitDir, readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim());
+
+				return { root: current, main: path.basename(common) === '.git' ? path.dirname(common) : null, broken: false };
+			} catch (e) {
+				// commondir が無いだけ（ENOENT・ENOTDIR）なら、メインは無いとして進める。それ以外は読めていないので broken
+				return { root: current, main: null, broken: !(e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) };
+			}
+		}
+
+		const parent = path.dirname(current);
+
+		if (parent === current) {
+			return null;
+		}
+
+		current = parent;
+	}
+}
+
 // グロブを正規表現に直す。壊れているグロブは Error を投げる。
 // 記号は ** ・ * ・ ? だけ。ほかの文字は、正規表現の記号も含めて、ただの文字として当てる。
 // - `**/`（先頭でも途中でも）は区切りごと省ける（0個以上のディレクトリ）
