@@ -739,6 +739,34 @@ expectPass('設定に plannerWritable が残っていても consult が通る', 
 	commitAll(git, 'init');
 }, { mode: 'consult' });
 
+// ---- codex への引数（-Container を足しても、付けないときの引数が変わらないことの基準。#99） ----
+// -o の値（ラッパーの一時ディレクトリ）と -C の値（作業の根）は呼ぶたびに違うので、置き換えてから比べる
+function expectArgs(name, mode, base, expected) {
+	try {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		if (base) {
+			ctx.git('checkout', '-q', '-b', 'feature');
+			ctx.write('a.txt', 'a\n');
+			commitAll(ctx.git, 'a');
+		}
+		const r = runWrapper(ctx, base, mode);
+		const args = JSON.parse(fs.readFileSync(`${ctx.mark}.json`, 'utf8'));
+		const o = args.indexOf('-o');
+		if (o >= 0) args[o + 1] = '<out>';
+		const c = args.indexOf('-C');
+		if (c >= 0 && path.resolve(args[c + 1]) === path.resolve(ctx.repo)) args[c + 1] = '<repo>';
+		const ok = r.code === 0 && JSON.stringify(args) === JSON.stringify(expected);
+		report(`引数: ${name}`, ok, `(code=${r.code} args=${JSON.stringify(args)})`);
+	} catch (e) {
+		report(`引数: ${name}`, false, String(e.message));
+	}
+}
+
+expectArgs('review（-Base 無し）は未コミットの変更を read-only で見る', 'review', '', ['exec', 'review', '--uncommitted', '-c', 'sandbox_mode=read-only', '-o', '<out>']);
+expectArgs('review（-Base あり）は基準ブランチとの差分を read-only で見る', 'review', 'main', ['exec', 'review', '--base', 'main', '-c', 'sandbox_mode=read-only', '-o', '<out>']);
+expectArgs('consult は read-only で作業の根を読む', 'consult', '', ['exec', '--ephemeral', '--color', 'never', '--skip-git-repo-check', '-s', 'read-only', '-C', '<repo>', '-o', '<out>']);
+
 // ---- Windows だけ：codex の探し方と、前の呼び方（invoke-codex.ps1）の中継（#100） ----
 if (isWindows) {
 	// pnpm・bun などで入れた形：シム（codex.cmd）はあるが、隣に node_modules/@openai/codex/bin/codex.js が無い。直し方を出して止まる
