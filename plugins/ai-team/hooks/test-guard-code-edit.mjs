@@ -576,6 +576,48 @@ try {
 		check('forPath: win32 では場所の判定をそろえる', forPath('C:/X/Repo', 'win32') === 'c:/x/repo');
 	}
 
+	// toSlash：`\` を `/` にするのは Windows だけ（#107。Linux・Mac では `\` は名前の文字）
+	{
+		const { toSlash, isSecretPath, globToRegExp } = await import('./ai-team-config.mjs');
+		const bs = '\\';
+		check('toSlash: Linux では .env\\local をそのままにする', toSlash(`.env${bs}local`, false) === `.env${bs}local`);
+		check('toSlash: Windows では .env\\local を .env/local にする', toSlash(`.env${bs}local`, true) === '.env/local');
+		check('Linux の扱い: .env\\local（1つの名前）が .env* に当たる', isSecretPath(toSlash(`.env${bs}local`, false)));
+		check('Windows の扱い: .env\\local は .env/local（.env フォルダの中）になり、.env* には当たらない', !isSecretPath(toSlash(`.env${bs}local`, true)));
+		check('Windows の扱い: .kv\\x が .kv/x として当たる', isSecretPath(toSlash(`.kv${bs}x`, true)));
+		check('Linux の扱い: .kv\\x は1つの名前で、.kv/ には当たらない', !isSecretPath(toSlash(`.kv${bs}x`, false)));
+		check('Windows の扱い: sub\\.env が sub/.env として当たる', isSecretPath(toSlash(`sub${bs}.env`, true)));
+		check('Linux の扱い: sub\\.env は1つの名前で、既定の一覧には当たらない', !isSecretPath(toSlash(`sub${bs}.env`, false)));
+
+		// u フラグ：? はコードポイント1つに当たる
+		const emoji = String.fromCodePoint(0x1f511);
+		const re = globToRegExp('private/?.json');
+		check('? は絵文字1つに当たる（private/<絵文字>.json）', re.test(`private/${emoji}.json`));
+		check('? は2文字には当たらない（private/ab.json）', !re.test('private/ab.json'));
+		check('? は / には当たらない', !re.test('private//.json'));
+		// u フラグで new RegExp が投げない（- / 日本語 絵文字 を含むグロブ）
+		for (const g of ['a-b/c.txt', '**/x-y', 'x/**', '秘密/ぱ*', `${emoji}/*.json`, 'a.b+c(d)^$|/?']) {
+			let ok = true;
+			try {
+				globToRegExp(g);
+			} catch {
+				ok = false;
+			}
+			check(`globToRegExp が投げない: ${g}`, ok);
+		}
+		// 既定のパターン（u なし）と同じに通る
+		for (const p of ['.env', '.env.local', 'a/.env', 'wp-config.php', 'x/wp-config.php', '.dev.vars', '.kv/x']) {
+			check(`既定の一覧に当たる: ${p}`, isSecretPath(p));
+		}
+		check('既定の一覧に当たらない: env.txt', !isSecretPath('env.txt'));
+		// NFC と NFD は区別して当てる（OS に依らない事実の記録。#107）
+		const nfc = '秘密/ぱ'.normalize('NFC');
+		const nfd = '秘密/ぱ'.normalize('NFD');
+		const reN = globToRegExp(`${nfc}*`);
+		check('NFC のグロブは NFC の名前に当たる', reN.test(nfc));
+		check('NFC のグロブは NFD の名前に当たらない（区別する。Mac での扱いは未確認）', !reN.test(nfd));
+	}
+
 	// ---- settings.json ----
 	const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
 	const allow = settings.permissions?.allow || [];

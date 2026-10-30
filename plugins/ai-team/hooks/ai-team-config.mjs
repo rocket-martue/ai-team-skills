@@ -195,7 +195,16 @@ export function globToRegExp(glob) {
 		}
 	}
 
-	return new RegExp(source + '$');
+	// u フラグ：? が UTF-16 の1単位ではなく、コードポイント1つ（絵文字など）に当たるようにする（#107）。
+	// u では `\` の後ろが構文文字以外だと SyntaxError になるが、上のエスケープは構文文字だけを逃がすので通る。
+	return new RegExp(source + '$', 'u');
+}
+
+// 照らす前に、区切りの `\` を `/` にそろえる。Windows だけ（#107）。
+// Linux・Mac では `\` はただの名前の文字（`.env\local` は1つの名前）。置き換えると `.env/local` になり `.env*` に当たらなくなる。
+// windows は確かめのために差し替えられるようにしてある（ふだんは今の OS）。
+export function toSlash(p, windows = process.platform === 'win32') {
+	return windows ? p.replace(/\\/g, '/') : p;
 }
 
 // 設定ファイルの中身（バイト列）を読んで確かめる。足すグロブの一覧を返す。壊れていれば Error を投げる。
@@ -496,7 +505,7 @@ function cli(argv) {
 		}
 	}
 
-	const hits = paths.filter((p) => isSecretPath(p.replace(/\\/g, '/'), extra));
+	const hits = paths.filter((p) => isSecretPath(toSlash(p), extra));
 
 	if (hits.length > 0) {
 		try {

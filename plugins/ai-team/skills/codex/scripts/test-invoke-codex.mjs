@@ -1209,6 +1209,16 @@ if (!isWindows) {
 		const got = relOrAbs(other, base, true);
 		return [got === other.replace(/\\/g, '/'), got];
 	});
+	// `\` を `/` にするのは Windows だけ（#107）。OS の引数（4つ目）で両方の枝を確かめる
+	const bs = '\\';
+	sendCase('relOrAbs: Linux・Mac（windows なし）では、名前の中の \\ をそのままにする', () => {
+		const got = relOrAbs(path.join(base, `.env${bs}local`), base, false, false);
+		return [got === `.env${bs}local`, got];
+	});
+	sendCase('relOrAbs: Windows では、\\ を / にする', () => {
+		const got = relOrAbs(`${base}${path.sep}.env${bs}local`, base, false, true);
+		return [got === '.env/local', got];
+	});
 }
 
 // 5. メインのチェックアウトの根（git worktree list）。git の呼び出しを偽物の git に差し替える確かめは、シェルのスクリプトが要るので Mac・Linux だけ
