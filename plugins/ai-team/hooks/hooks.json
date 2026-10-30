@@ -11,6 +11,16 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.mjs"]
+          }
+        ]
       }
     ],
     "SessionStart": [

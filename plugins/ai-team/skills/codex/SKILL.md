@@ -25,7 +25,7 @@ allowed-tools:
 
 1. 依頼を、健さんが1回で答えられる1つの頼みにする。会話の経緯をそのまま渡さない。自分の結論や見立ては渡さない（先入観を移さないため）
 2. 頼みの文をセッションの scratchpad（`<一時ディレクトリ>/claude/` の下）の一時ファイルに書く。`review` は頼みの文を使わない
-3. リポジトリの根から、Bash ツールで次の形で呼ぶ（Windows・Mac・Linux で同じ。settings.json の allow に入っているのはこの形と、前の呼び方（下の「前の呼び方」）だけ）。1回に数分かかるので、`run_in_background` で回し、終わりの知らせを受けてから読む
+3. リポジトリの根から、Bash ツールで次の形で呼ぶ（Windows・Mac・Linux で同じ。プラグインのフック（`hooks/guard-bash.mjs`）が確認なしで通すのは、この形と、前の呼び方（下の「前の呼び方」）の本物だけ。settings.json の allow には置かない）。1回に数分かかるので、`run_in_background` で回し、終わりの知らせを受けてから読む
 
    ```
    node "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.mjs" -Mode <consult|review|image> [-PromptFile <一時ファイル>] [-Image "<画像1>|<画像2>"] [-Base <基準ブランチ>] [-WorkingDirectory <パス>] [-Container]
@@ -80,7 +80,7 @@ allowed-tools:
 
 ## 前の呼び方
 
-`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" ...`（Windows だけ）も、受け取った引数をそのまま `invoke-codex.mjs` に渡す中継として残してある。導入済みのリポジトリの settings.json の allow と、gh-skills の呼び方がこの形のため。新しく書く呼び方は `node ... invoke-codex.mjs` にする
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/skills/codex/scripts/invoke-codex.ps1" ...`（Windows だけ）も、受け取った引数をそのまま `invoke-codex.mjs` に渡す中継として残してある。gh-skills の呼び方がこの形のため（フックはこの形の本物も通す）。新しく書く呼び方は `node ... invoke-codex.mjs` にする
 
 ## 注意
 
