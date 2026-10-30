@@ -18,7 +18,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 - フックに Node.js が要る（node が PATH に無いと、フックは何も言わずに外れる）
 - マーケットプレイスの登録に git が要る（GitHub から clone するため）
 - 入れるフォルダは git のリポジトリでなくてもよい（ガードとフックは、開いたフォルダを根として見る）。ただし、差分を使うもの（健さんのレビュー・藤さんに比べるブランチで見てもらう・純ちゃん・コミットと PR）は使えない。健さんへの相談と画像の生成は使える。そのときは「使うリポジトリごと」の 6 を飛ばす。「入ったかを確かめる」の 2 の `git fetch origin` は失敗する（`not a git repository`）が、確認のダイアログが出なければ allow は効いている
-- 健さんは使わなくても回る。使うときは、各 PC に Codex CLI と健さんの AGENTS.md が要る。ラッパーは Node.js で書いてあり、Windows・Mac・Linux で動く（Mac は、テストを Linux で通しただけで、実機ではまだ確かめていない）
+- 健さんは使わなくても回る。使うときは、各 PC に Codex CLI と健さんの AGENTS.md が要る（健さんにテストも打たせる「コンテナでのレビュー」を使うなら、Docker も）。ラッパーは Node.js で書いてあり、Windows・Mac・Linux で動く（Mac は、テストを Linux で通しただけで、実機ではまだ確かめていない）
 
 ## 導入
 
@@ -136,7 +136,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
    node "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.mjs" -Mode check
    ```
 
-   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。Codex CLI が入っていなくても打てる。ダイアログを見逃しても、セッションの記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たっている
+   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。Codex CLI が入っていなくても打てる（`-Container` を付けないとき）。ダイアログを見逃しても、セッションの記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たっている
 
 確かめが済んだら、下の「使い方」のとおりにガネーシャに頼めば使える。
 
@@ -211,6 +211,43 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 - **`names` を書く前に**、そのリポジトリを使う全部の PC で、プラグインを `names` に対応した版にし（「導入済みのリポジトリへの反映」）、開いているセッションを開き直す。対応する前の版は `names` を知らないキーとして「壊れている」と扱い、ガードが全部の編集を止める
 - それでも古い版で止まったとき（止める文に「使えるのは secretPatterns・plannerWritable だけ」とある）は、`names` を消さずに、その PC でプラグインを上げて（「導入済みのリポジトリへの反映」の手で打つコマンド）、VS Code を開き直す
 
+### コンテナでのレビュー（健さんにテストも打たせる）
+
+ふつうの `review` では、健さんはテストを走らせない（この PC の sandbox は read-only）。Docker が使える PC では、`review` に `-Container` を付けると、Linux のコンテナの中で健さんを動かし、テストを打った結果も根拠にさせられる。任意の機能で、使わなければ何もしなくてよい。
+
+**使うリポジトリごと**：`.claude/ai-team.json` に `container` を書く（`setup` は準備のコマンド、`test` はテストのコマンド。どちらも1行）。`setup` には、テストが要る生成物を作るコマンドも入れる。まずは Node のリポジトリが対象（イメージは `node:22-bookworm`）。
+
+```json
+{
+	"secretPatterns": [],
+	"container": { "setup": "npm ci", "test": "npm test" }
+}
+```
+
+**PC ごとに1回**
+
+1. Docker Desktop（Linux は Docker Engine）を入れて起動する
+2. 健さんの AGENTS.md に、テンプレート（`repo-files/codex/AGENTS.md`）の `<!-- ai-team: container-review v1 -->` の行で始まる節（「コンテナの中のレビュー」）を写す。自分用に書き換えた AGENTS.md なら、その節だけ足す。無いと `-Container` は止まる
+3. リポジトリの根で、ガネーシャに `-Mode check -Container` を打ってもらう（イメージを作る。初回は数分）。「コンテナ用のログインがありません」と出たら、次に進む
+4. ChatGPT の設定（セキュリティ）で「デバイスコードによるサインインを有効にする」を一時的にオンにし、止める文に出た `docker run --rm -it -v ai-team-codex-home:/root/.codex ai-team-codex:<版> codex login --device-auth` を PowerShell で打ってログインする。済んだら設定をオフに戻す（ログインはそのまま使える）
+
+**知っておくこと**
+
+- コンテナには、今ディスクにあるファイル（追跡しているものと、無視されていない未追跡のもの）と差分だけを写す。git の履歴は写さない。この PC のリポジトリには何も書かない
+- 次のどれかがあると止まる（外して写さない）：秘密情報のファイル（変更していなくても。追跡している `wp-config.php` など）・サブモジュール・未追跡の入れ子のリポジトリ・根より下のリンク・名前に改行などを含むファイル。WordPress の案件では止まることが多い
+- `setup`・`test` はリポジトリの設定ファイルから来る。依存パッケージは、コンテナのログインのボリュームを読める場所で動く（手元で `npm test` を打つのと同じく、依存パッケージを信じる前提）
+- この PC の git の設定は信じる。フィルター（clean・process）などの設定に、リポジトリの中のスクリプトを書かない
+- 健さんのコンテナは、Docker の seccomp を外して起こす（`--security-opt seccomp=unconfined`。外さないと Codex の sandbox が動かない。Codex の sandbox はコンテナの中で生きている）
+- `DOCKER_CONTEXT` があるとき、`DOCKER_HOST` や docker の context がこの PC 以外を指すときは止まる
+- devcontainer の中では、Docker が使えなければ止まる
+- codex の版を上げると、次に呼んだときにその版のイメージを作り、前の版のイメージを消す
+- 強制終了したときや、後始末に失敗したときは、コンテナ・作業用のボリューム・一時ディレクトリ（作業ツリーの写し。Windows は `%TEMP%\claude\codex-*`、Mac・Linux は一時ディレクトリの下の `claude-codex-*`）が残ることがある。次で消す
+
+  ```
+  docker ps -aq --filter label=ai-team-codex=1        # 残ったコンテナ。docker rm -f <ID> で消す
+  docker volume ls -q --filter label=ai-team-codex=1  # 残ったボリューム。docker volume rm <名前> で消す
+  ```
+
 ## 中身
 
 ### プラグイン（`plugins/ai-team/`）
@@ -219,7 +256,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 | --- | --- |
 | `docs/team-rules.md` | チーム共通の決まり（言語・作業の進め方・チームの表・選び方の目安）。ガネーシャにはセッションの始めに SessionStart フックで入る。メジェドと藤さんは最初に Read で読む |
 | `agents/mejed.md`・`agents/adversary.md` | メジェドと藤さんの定義 |
-| `skills/codex/` | 健さんの呼び方と、ラッパー `scripts/invoke-codex.mjs`（Node.js。read-only・秘密情報の照らし合わせ・返事は標準出力に出すだけ）。`scripts/invoke-codex.ps1` は、前の呼び方を残すための中継 |
+| `skills/codex/` | 健さんの呼び方と、ラッパー `scripts/invoke-codex.mjs`（Node.js。この PC では read-only・秘密情報の照らし合わせ・返事は標準出力に出すだけ。`-Container` のときはコンテナの中で動かす）。`scripts/invoke-codex.ps1` は、前の呼び方を残すための中継。`container/Dockerfile` は `-Container` のイメージ |
 | `hooks/guard-code-edit.mjs` | 編集のガード。秘密情報のファイルと、リポジトリの外（メモリ・計画ファイル・scratchpad を除く）の編集だけを止める。誰が編集するかは見ない |
 | `hooks/session-start.mjs` | team-rules.md をセッションの始めに入れる |
 | `hooks/ai-team-config.mjs` | ガードとラッパーが使う判定の部品（秘密情報の既定の一覧・`.claude/ai-team.json` の読み込み） |
