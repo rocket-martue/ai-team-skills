@@ -1070,6 +1070,34 @@ containerCase('-Container は consult に付けられない', () => {
 	return [r.code !== 0 && r.stderr.includes('review と check だけ') && r.calls.length === 0, detail(r)];
 });
 
+containerCase('worktree から呼んでも、メインのチェックアウトから呼んでも、写すものと差分が同じ', () => {
+	const ctx = makeContainerRepo();
+	const wt = path.join(root, `wt-${caseNo}`);
+	ctx.git('worktree', 'add', '-q', '-b', 'side', wt);
+	for (const dir of [ctx.repo, wt]) {
+		fs.writeFileSync(path.join(dir, 'README.md'), 'changed\n');
+		fs.writeFileSync(path.join(dir, 'new.txt'), 'new\n');
+	}
+	const pick = (r) => {
+		const copied = listCopied(r.cpDir);
+		const diffFile = copied.find((p) => p.endsWith('/review.diff'));
+		return JSON.stringify([copied, diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '']);
+	};
+	const main = runContainer(ctx);
+	const mainPick = pick(main);
+	caseNo++;
+	const fromWt = runContainer({ ...ctx, repo: wt }, { workDir: wt });
+	return [main.code === 0 && fromWt.code === 0 && mainPick === pick(fromWt), `${detail(main)} ${detail(fromWt)}`];
+});
+
+if (isWindows) {
+	containerCase('中継の .ps1 から -Container を付けても、旗として届く（consult に付けると止まる。docker には届かない）', () => {
+		const ctx = makeContainerRepo();
+		const r = spawnSync(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPs1, '-Mode', 'consult', '-Container', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+		return [r.status !== 0 && (r.stderr || '').includes('review と check だけ') && !fs.existsSync(ctx.mark), `(code=${r.status} stderr=${(r.stderr || '').trim().slice(0, 200)})`];
+	});
+}
+
 containerCase('-Container は前・間・後ろのどこに置いても、次の語を値として食わない', () => {
 	const ctx = makeContainerRepo();
 	ctx.git('checkout', '-q', '-b', 'feature');

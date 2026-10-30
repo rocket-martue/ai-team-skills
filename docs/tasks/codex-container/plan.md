@@ -89,7 +89,7 @@
 | `plugins/ai-team/skills/codex/container/Dockerfile`（新規） | `node:22-bookworm` に、ビルドの引数で渡した版の `@openai/codex` を入れる。`WORKDIR /work/repo`。build のコンテキストはこのフォルダだけ |
 | `plugins/ai-team/hooks/ai-team-config.mjs` | `container` キーを受ける（オブジェクトで、`setup`・`test` は空でない1行の文字列。それ以外は「壊れている」。「打ち間違い」の判定にも足す）。`check` の出力に、読んだ `container` を足す（作業の根とメインの根の両方にあれば、作業の根） |
 | `plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs` | **実装の前に**、今の review・consult の codex への引数（`-s read-only`・`-c sandbox_mode=read-only`・`--uncommitted`／`--base` など）を固定して見る確かめを足す。そのうえで、偽物の `docker` で `-Container` の確かめを足す |
-| `plugins/ai-team/skills/codex/scripts/`（テストの入口。新規） | ラッパーを import し、`docker` の起動を偽物に差し替えて呼ぶ |
+| テストの入口（`test-invoke-codex.mjs` がテストの一時ディレクトリに作る。プラグインには置かない） | ラッパーを import し、`docker` の起動を偽物に差し替えて呼ぶ |
 | `plugins/ai-team/hooks/test-guard-code-edit.mjs` | `container` の正しい設定・壊れた設定 |
 | `plugins/ai-team/skills/codex/SKILL.md` | `-Container` の使い方・前提・止まるとき（D10 の止まる理由を含む）。「sandbox は常に read-only」「テストは走らない」を直す |
 | `repo-files/codex/AGENTS.md` | 印の行（`<!-- ai-team: container-review v1 -->`）で始まる節を足し、頭が「ガネーシャから（コンテナの中のレビュー）」の依頼の読み方を書く：頼まれたテストのコマンドは打ってよい／作業ツリーのファイルは書き換えない（テストが作るキャッシュ・一時ファイルは除く）／根は `/work/repo`（git の根ではない）／場所は `/work/repo` からの相対パス |
@@ -166,3 +166,15 @@
 - 4回目（藤さん9件・健さん5件。改訂4に対して。2人とも挙げたものが2件）：どれも採り、改訂5に入れた。確かめた中身と送る中身を一致させる（スナップショットを先に作り、それを確かめる。差分のパスは `--patch-with-raw -z` で差分と同じ1回の git から取る）／準備のコンテナの作業ディレクトリ（Dockerfile の `WORKDIR` と両方の `-w`）／リンクの判定を根の実体からの相対にする（Mac の `/var`・根より上のリンク・綴りの大文字小文字で止まらない）／`DOCKER_HOST`・`DOCKER_CONTEXT` があれば止め、以後は `--context` で固定／コンテナにもラベル・作ったらすぐ後始末に登録・消す順番／`config.toml` の値は `"$@"` で渡す／AGENTS.md は印の行で見分ける／写しと差分はリポジトリの根から／頼みの文と差分は準備の後に健さんのコンテナにだけ写す／ログインのボリュームに残ってよいものを決める
 - 5回目（藤さん7件（必須なし）・健さん5件。改訂5に対して）：どれも採り、改訂6に入れた。名前で確かめてから写す（秘密情報の中身を一時ディレクトリに写さない・入れ子のリポジトリで思わぬ失敗にしない・判定に使う設定を1回の `check` で読む）／git の clean・process のフィルターがあれば止める（差分を作る git が、リポジトリの中のスクリプトをこの PC で動かしうる）／`docker cp` は `repo/.`／頼みの文・差分・返事は健さんのコンテナだけの `/review` に置く（準備が `/work` に置いたリンクを通らない）／後始末の失敗は、残ったものと消し方を出す／build のコンテキストはプラグインの `container/` だけ／`DOCKER_HOST` はこの PC 向きなら使う（rootless）／壊れたシンボリックリンクも止める／raw と差分の境目／Mac の綴りの大小の止め文
 - 6回目（5巡目・上限。藤さん：必須1・表記6、健さん：必須3・推奨2・表記1。改訂6に対して）：**5巡目の後に直したもの**（上限のため、計画の段ではもう1巡は回さない。実装の PR の前に、健さん・藤さん・`/security-review` を通す）。git のフィルターがあれば止める、は Git for Windows の git-lfs で全部の PC で止まる → まーちゅうと決めて、止めない（D12）。fsmonitor のフック・索引の書き戻し → git に `-c core.fsmonitor=false`・`--no-optional-locks`（3）。準備が `/work/repo` をリンクにすり替える → 健さんのコンテナの頭で確かめて止める（12）。写している途中の親のリンクへのすり替え → 守る範囲の外と明記（残る危険）。`/review` の作り方（4・12）・古いイメージを消せないとき（8）・ハッシュから `.git/` を外す・Linux の Docker Engine はマージの後に確かめる。健さんの表記（正規表現のエスケープ）は、3 を書き換えて式が無くなったので消えた
+
+## 実装で決めたこと・確かめたこと
+
+- テストの入口は、プラグインのファイルにせず、`test-invoke-codex.mjs` がテストの一時ディレクトリに作る（ラッパーを差し替える口が、プラグインの中に残らない）
+- 中継の `.ps1` の確かめは、`-Container` を consult に付けて止まる側で見る（通る側だと、中継は本物の docker を呼ぶため）
+- テスト：Windows・Linux（`node:22-bookworm`）の両方で通る。Linux では、名前に改行を含むファイルとシンボリックリンクの確かめも通る
+- 実機（この PC の Docker Desktop。ログインは #39 の PoC のボリュームから `auth.json` だけを写した）
+  - `check -Container` でイメージ `ai-team-codex:0.164.0` を作り、ログインを確かめた
+  - テストで落ちる変更（加算を減算に）を入れた仮の Node のリポジトリ（空白と日本語の名前のファイルあり）で `review -Container`：健さんが `npm test`（終了コード 1・失敗 1 件）を根拠に、必須の指摘を返した
+  - 呼ぶ前と後で、`.git/` を除く全部のファイルのハッシュと HEAD が同じ。コンテナと作業用のボリュームは残っていない
+  - ログインのボリュームに残ったのは、ログインの情報・AGENTS.md・codex 自身の状態（sqlite）・キャッシュ・プラグインだけ。`sessions` は無く、差分・頼みの文・返事の文字列はボリュームのどこにも無かった
+  - 追跡している `wp-config.php` を足すと、docker を呼ばずに止まった
