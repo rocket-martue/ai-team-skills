@@ -1013,6 +1013,19 @@ containerCase('通る：追跡しているファイルがフォルダに置き�
 	return [r.code === 0 && copied.includes('c1__work_repo/foo/index.js'), `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
 });
 
+containerCase('通る：最初のコミットの前（HEAD が無い）でも、空のツリーと比べて差分を作る', () => {
+	const ctx = makeRepo();
+	ctx.write('.claude/ai-team.json', containerConfig);
+	ctx.write('package.json', '{"name":"x"}\n');
+	ctx.git('add', 'package.json', '.claude/ai-team.json');
+	ctx.write('untracked.txt', 'u\n');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	const diffFile = copied.find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [r.code === 0 && diffText.includes('diff --git a/package.json b/package.json') && copied.includes('c1__work_repo/untracked.txt'), detail(r)];
+});
+
 containerCase('通る：DOCKER_HOST がこの PC（unix:// か npipe://）なら止まらず、--context を付けない', () => {
 	const ctx = makeContainerRepo();
 	const r = runContainer(ctx, { extraEnv: { DOCKER_HOST: isWindows ? 'npipe:////./pipe/fake' : 'unix:///run/user/1000/docker.sock' } });

@@ -472,7 +472,7 @@ function buildContainerPrompt(container, untracked) {
 		'',
 		'- 見る差分：/review/review.diff',
 		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください）',
-		'- 写していないのは、秘密情報の決まりに当たるファイル（`.env*`・`.dev.vars`・`.kv/` の下・`wp-config.php` と、`.claude/ai-team.json` の `secretPatterns` に当たるもの）だけです。テストがそれらを読もうとして落ちたときに限り、変更の不具合ではないので、指摘にせず、そう書き添えてください。ほかのファイルが無くて落ちたときは、ふつうに指摘してください',
+		'- 写していないのは、秘密情報の決まりに当たるファイル（`.env*`・`.dev.vars`・`.kv/` の下・`wp-config.php` と、`.claude/ai-team.json` の `secretPatterns` に当たるもの）と、.gitignore で無視されている未追跡のファイルです。テストが秘密情報の決まりに当たるファイルを読もうとして落ちたときに限り、変更の不具合ではないので、指摘にせず、そう書き添えてください。ほかのファイルが無くて落ちたときは、ふつうに指摘してください',
 		`- テスト：作業ツリーで \`${container.test}\` を打ち、その結果も根拠にしてください（準備のコマンド \`${container.setup}\` は打ってあります）`,
 		'- 作業ツリーのファイルを書き換えないでください（テストが作るキャッシュや一時ファイルは除く）',
 		'- 指摘は、/work/repo からの相対パスのファイル:行と、重要度（必須／推奨／表記）を付けて書いてください',
@@ -667,7 +667,12 @@ function main(cleanups, argv, deps) {
 
 		// 4〜6. 送るものを決め、名前で確かめてから写す（docker はまだ呼ばない）
 		let compare = 'HEAD';
-		if (opts.Base.trim() !== '') {
+		if (opts.Base.trim() === '' && git(['rev-parse', '--verify', '-q', 'HEAD'], repoRoot).code !== 0) {
+			// 最初のコミットの前（HEAD が無い）は、空のツリーと比べる（リポジトリのハッシュの方式に合わせて git に作らせる）
+			const empty = spawnSync('git', [...gitPrefix, 'hash-object', '-t', 'tree', '--stdin'], { cwd: repoRoot, input: '', encoding: 'utf8' });
+			if (empty.status !== 0 || empty.stdout.trim() === '') stopWrapper('最初のコミットの前のリポジトリで、比べる先（空のツリー）を作れませんでした。');
+			compare = empty.stdout.trim();
+		} else if (opts.Base.trim() !== '') {
 			const mb = git(['merge-base', opts.Base, 'HEAD'], repoRoot);
 			if (mb.code !== 0 || mb.stdout.trim() === '') stopWrapper(`基準ブランチ ${opts.Base} との分かれ目が分かりません。`);
 			compare = mb.stdout.trim();

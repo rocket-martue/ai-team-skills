@@ -64,7 +64,7 @@ allowed-tools:
 
 - 前提（どれかが欠けていれば、理由と直し方を出して止まる。黙って今の `review` に戻らない）
   - リポジトリの `.claude/ai-team.json` に `container`（`setup`：準備のコマンド、`test`：テストのコマンド）がある
-  - Docker が動いていて、向き先がこの PC（`DOCKER_CONTEXT` が無い。`DOCKER_HOST` は `unix://`・`npipe://` だけ）
+  - Docker が動いていて、向き先がこの PC（`DOCKER_CONTEXT` が無い。`DOCKER_HOST` は `unix://`・`npipe:////./pipe/…` だけ）
   - コンテナ用のログインがある（PC ごとに1回。README の「コンテナでのレビュー」）
   - 各 PC の AGENTS.md に、コンテナのレビューの節（`<!-- ai-team: container-review v1 -->` の行で始まる節）がある
 - 秘密情報のファイル（`.env.example` のような例のファイルも）は、変更していなければ写さないだけ（名前も健さんに送らない）
