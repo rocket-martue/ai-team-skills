@@ -7,7 +7,8 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs"],
+            "onFailure": "block"
           }
         ]
       }

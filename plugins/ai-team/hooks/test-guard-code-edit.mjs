@@ -120,6 +120,58 @@ try {
 	run('外: ~/.claude/skills/ は止まる', { file: path.join(homedir(), '.claude', 'skills', 's', 'SKILL.md') }, 2);
 	run('外: scratchpad の中でも .env は止まる', { file: path.join(tmpdir(), 'claude', '.env') }, 2);
 	runRaw('JSON でない入力は止まる', 'not json', 2);
+	// 思わぬ形の入力は止まる（例外で終了コード 1 になると、Claude Code は編集を通すため。#108）
+	runRaw('入力が JSON の null なら止まる', 'null', 2);
+	runRaw('入力が配列なら止まる', '[]', 2);
+	runRaw('tool_input が null なら止まる', JSON.stringify({ tool_name: 'Edit', tool_input: null }), 2);
+	runRaw('tool_input が文字列なら止まる', JSON.stringify({ tool_name: 'Edit', tool_input: 'x' }), 2);
+	runRaw('file_path が文字列でなければ止まる', JSON.stringify({ tool_name: 'Write', tool_input: { file_path: 123 } }), 2);
+	runRaw('file_path が無ければ通る（編集先が無い）', JSON.stringify({ tool_name: 'Edit', tool_input: {} }), 0);
+
+	// ---- 設定を読む根（#108。ラッパーと同じく、作業の根とメインのチェックアウトの根の両方を読む） ----
+	// git は呼ばないので、worktree の .git（gitdir: と commondir）は手で作る
+	{
+		const mainRepo = path.join(sandbox, 'roots-main');
+		const linked = path.join(sandbox, 'roots-linked');
+		const child = path.join(mainRepo, '.claude', 'worktrees', 'c');
+		const makeWorktree = (dir, name) => {
+			mkdirSync(path.join(mainRepo, '.git', 'worktrees', name), { recursive: true });
+			writeFileSync(path.join(mainRepo, '.git', 'worktrees', name, 'commondir'), '../..\n');
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(path.join(dir, '.git'), `gitdir: ${path.join(mainRepo, '.git', 'worktrees', name)}\n`);
+		};
+		mkdirSync(path.join(mainRepo, '.git'), { recursive: true });
+		mkdirSync(path.join(mainRepo, '.claude'), { recursive: true });
+		writeFileSync(path.join(mainRepo, '.claude', 'ai-team.json'), JSON.stringify({ secretPatterns: ['private/**'] }));
+		makeWorktree(linked, 'linked');
+		makeWorktree(child, 'c');
+		mkdirSync(path.join(child, '.claude'), { recursive: true });
+		writeFileSync(path.join(child, '.claude', 'ai-team.json'), JSON.stringify({ secretPatterns: ['only-child/**'] }));
+
+		const runIn = (name, { file, proj, cwd = proj }, expected) => {
+			const result = spawnSync(process.execPath, [hook], {
+				input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: file }, cwd }),
+				env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
+				encoding: 'utf8',
+			});
+			judgeResult(name, result, expected);
+		};
+		runIn('根: メインで足した secretPatterns は、メインで止まる', { file: path.join(mainRepo, 'private', 'a.json'), proj: mainRepo }, 2);
+		runIn('根: 設定の無い worktree で始めたセッションでも、メインで足した secretPatterns で止まる', { file: path.join(linked, 'private', 'a.json'), proj: linked }, 2);
+		runIn('根: 設定の無い worktree のコードは通る', { file: path.join(linked, 'src', 'a.js'), proj: linked }, 0);
+		runIn('根: メインから、.claude/worktrees/ の中の worktree にだけある secretPatterns で止まる', { file: path.join(child, 'only-child', 'a.json'), proj: mainRepo }, 2);
+		runIn('根: メインから、.claude/worktrees/ の中の worktree のコードは通る', { file: path.join(child, 'src', 'a.js'), proj: mainRepo }, 0);
+
+		// テンプレートのリポジトリ（repo-files/claude/ai-team.json だけ）でも、そこの secretPatterns が効く。壊れていても、そのファイルは直せる
+		const tmpl = path.join(sandbox, 'roots-template');
+		mkdirSync(path.join(tmpl, 'repo-files', 'claude'), { recursive: true });
+		const tmplConfig = path.join(tmpl, 'repo-files', 'claude', 'ai-team.json');
+		writeFileSync(tmplConfig, JSON.stringify({ secretPatterns: ['tmpl-secret/**'] }));
+		runIn('根: repo-files/claude/ai-team.json の secretPatterns も効く', { file: path.join(tmpl, 'tmpl-secret', 'a'), proj: tmpl }, 2);
+		writeFileSync(tmplConfig, '{ broken');
+		runIn('根: repo-files/claude/ai-team.json が壊れていれば、ほかの編集は止まる', { file: path.join(tmpl, 'src', 'a.js'), proj: tmpl }, 2);
+		runIn('根: repo-files/claude/ai-team.json が壊れていても、そのファイルは直せる', { file: tmplConfig, proj: tmpl }, 0);
+	}
 
 	// ---- worktree・境界 ----
 	run('入れ子の worktree: コードは通る', { file: p(...WT2.split('/'), 'src', 'a.php') }, 0);
@@ -407,6 +459,10 @@ try {
 				e.matcher === undefined &&
 				(e.hooks || []).some((h) => h.command === 'node' && (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs')
 		)
+	);
+	check(
+		'hooks.json のガードは onFailure が block（起動できない・タイムアウト・終了コード 2 以外でも編集を止める。#108）',
+		(pluginHooks.PreToolUse || []).some((e) => (e.hooks || []).some((h) => (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs' && h.onFailure === 'block'))
 	);
 	check(
 		'hooks.json に登録されているのは PreToolUse と SessionStart だけ',
