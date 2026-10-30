@@ -56,7 +56,7 @@ function judge(absolute, projectDir, outsideWritable, label, secretRegexps) {
 
 		const allowed = outsideWritable.some(
 			({ base, pattern }) =>
-				isInside(absolute, base) && pattern.test(forMatch(path.relative(base, absolute).split(path.sep).join('/')))
+				isInside(absolute, base) && pattern.test(forPath(path.relative(base, absolute).split(path.sep).join('/')))
 		);
 
 		return allowed ? null : `guard-code-edit: リポジトリの外（${label}）は編集できません。`;

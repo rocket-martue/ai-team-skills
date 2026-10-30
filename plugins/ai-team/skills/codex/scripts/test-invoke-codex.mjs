@@ -188,8 +188,10 @@ function runWrapper(ctx, base, mode = 'review', workDir = ctx.repo, wrapperPath 
 			return false;
 		}
 	};
+	// 場所の比べ方はラッパーの sameLocation と同じ（大文字小文字は Windows だけそろえる）
+	const sameDir = (a, b) => (isWindows ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 	const first = env.PATH.split(path.delimiter).find((dir) => dir.trim() !== '' && usable(dir)) || null;
-	if (first === null || path.resolve(first).toLowerCase() !== path.resolve(fakeDir).toLowerCase()) {
+	if (first === null || !sameDir(first, fakeDir)) {
 		console.error(`ラッパーが選ぶ codex が偽物ではありません（${first}）。本物に届くかもしれないので、ラッパーを呼ばずに落とします。`);
 		fs.rmSync(root, { recursive: true, force: true });
 		process.exit(1);
