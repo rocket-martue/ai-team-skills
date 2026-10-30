@@ -211,6 +211,47 @@ try {
 			runAt('細工した .git: 外の設定は読むので、そこの secretPatterns は効く', { file: path.join(sub, 'x', 'a'), proj: sub }, 2);
 		}
 
+		// 設定が壊れているときの止める文：プロジェクトの中なら「直してください」、外なら「このセッションからは直せません」
+		{
+			const stderrAt = (file, proj) =>
+				spawnSync(process.execPath, [hook], {
+					input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: file }, cwd: proj }),
+					env: { ...process.env, CLAUDE_PROJECT_DIR: proj },
+					encoding: 'utf8',
+				});
+			const inDir = path.join(sandbox, 'hint-in');
+			mkMain(inDir);
+			writeFileSync(cfgOf(inDir), '{ broken');
+			const rIn = stderrAt(path.join(inDir, 'src', 'a.js'), inDir);
+			check('壊れた設定がプロジェクトの中: 止める文に「先にそのファイルを直してください」が出る', rIn.status === 2 && rIn.stderr.includes('先にそのファイルを直してください。') && !rIn.stderr.includes('このセッションからは直せません'));
+
+			const forge2 = path.join(sandbox, 'hint-forge', 'sub');
+			const victim2 = path.join(sandbox, 'hint-victim');
+			mkMain(victim2);
+			writeFileSync(cfgOf(victim2), '{ broken');
+			mkdirSync(path.join(forge2, 'g'), { recursive: true });
+			writeFileSync(path.join(forge2, '.git'), 'gitdir: ./g\n');
+			writeFileSync(path.join(forge2, 'g', 'commondir'), `${path.relative(path.join(forge2, 'g'), path.join(victim2, '.git'))}\n`);
+			const rOut = stderrAt(path.join(forge2, 'src', 'a.js'), forge2);
+			check('壊れた設定がプロジェクトの外: 止める文に「このセッションからは直せません」が出る', rOut.status === 2 && rOut.stderr.includes('このセッションからは直せません') && !rOut.stderr.includes('先にそのファイルを直してください'));
+		}
+
+		// リンクの実体が入れ子のリポジトリの中：指定のパスは外のリポジトリの中でも、実体の側の設定の secretPatterns で止まる
+		{
+			const outer = path.join(sandbox, 'alias-outer');
+			const lib = path.join(outer, 'packages', 'lib');
+			mkMain(outer);
+			mkMain(lib);
+			writeFileSync(cfgOf(lib), JSON.stringify({ secretPatterns: ['private/**'] }));
+			mkdirSync(path.join(lib, 'private'), { recursive: true });
+			writeFileSync(path.join(lib, 'private', 'token.json'), '{}');
+			if (trySymlink(path.join(lib, 'private', 'token.json'), path.join(outer, 'alias.json'), 'file')) {
+				runAt('入れ子のリポジトリへのリンク: 実体が中の secretPatterns に当たれば止まる', { file: path.join(outer, 'alias.json'), proj: outer }, 2);
+			} else {
+				console.log('skip 入れ子のリポジトリへのリンクの確かめ（シンボリックリンクを作れない環境）');
+			}
+		}
+
 		// .kv の名前の worktree の設定ファイルは止まる（.kv/ は秘密情報）
 		{
 			const mainDir = path.join(sandbox, 'kv-main');

@@ -100,8 +100,9 @@ function judge(absolute, projectDir, outsideWritable, label, secretRegexps, perR
 // - フックの cwd の git の根と、そのメインの根。ただし、そのメインの根がプロジェクトのメインの根と同じとき（同じリポジトリ）だけ
 //   （EnterWorktree の後は、cwd が worktree、CLAUDE_PROJECT_DIR がメインを指すため。関係ないリポジトリの壊れた設定で、全部の編集が止まらないように）
 // - 編集先がプロジェクトの中なら、編集先が入っている git の根（.claude/worktrees/<名前>/ の中など）と、そのメインの根
+//   指定のパスだけでなく、リンクをたどった実体のパスがプロジェクトの中のときも、同じように集める（入れ子のリポジトリの設定が読まれずに通らないように）
 // 返すのは { roots: 根の配列, problem: 止める理由（無ければ null） }。.git を読めないときは problem に入れる。
-function configRoots(projectDir, cwd, specified) {
+function configRoots(projectDir, cwd, specified, real, projectReal) {
 	const roots = [projectDir];
 	let problem = null;
 	const add = (r) => {
@@ -118,15 +119,18 @@ function configRoots(projectDir, cwd, specified) {
 	if (own !== null) add(own.main);
 	if (typeof cwd === 'string' && cwd !== '') {
 		// cwd の .git が壊れているときは、同じリポジトリか分からないので、止めずに cwd の根を読まないだけにする
-		// （cwd がプロジェクトの中なら、プロジェクトの根・編集先の根で見ている）
+		// （cwd がプロジェクトの中でも、cwd の .git が壊れた worktree で、編集先がメインの側のときは、その worktree の設定は読まない）
 		const here = gitRoots(cwd);
 		if (here !== null && !here.broken && own !== null && own.main !== null && here.main !== null && normalize(here.main) === normalize(own.main)) {
 			add(here.root);
 			add(here.main);
 		}
 	}
-	if (isInside(specified, projectDir)) {
-		const target = look(specified);
+	const inside = [];
+	if (isInside(specified, projectDir)) inside.push(specified);
+	if (real !== null && real !== undefined && isInside(real, projectReal)) inside.push(real);
+	for (const where of inside) {
+		const target = look(where);
 		if (target !== null) {
 			add(target.root);
 			add(target.main);
@@ -169,7 +173,7 @@ function main() {
 
 	// リポジトリごとの追加（.claude/ai-team.json。無ければ repo-files/claude/ai-team.json）を、読む根の全部から合わせる。
 	// どれかが壊れていたら、黙って既定の一覧に戻らず、編集を止める。
-	const { roots, problem } = configRoots(projectDir, input.cwd, specified);
+	const { roots, problem } = configRoots(projectDir, input.cwd, specified, real, projectReal);
 	if (problem !== null) {
 		block(problem);
 	}
