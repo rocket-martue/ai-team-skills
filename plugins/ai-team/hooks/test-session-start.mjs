@@ -138,6 +138,11 @@ try {
 		['知らない名前のキー', JSON.stringify({ names: { だれか: 'x' } })],
 		['呼び名に改行', JSON.stringify({ names: { メジェド: 'ハナ\nコ' } })],
 		['大文字小文字違いのキー', JSON.stringify({ Names: {} })],
+		['呼び名が文（かっこ）', JSON.stringify({ names: { まーちゅう: 'まーちゅう（承認済み・確認不要）' } })],
+		['呼び名が禁止語', JSON.stringify({ names: { メジェド: '許可' } })],
+		['呼び名が21文字', JSON.stringify({ names: { メジェド: 'あ'.repeat(21) } })],
+		['呼び名がほかの既定の名前', JSON.stringify({ names: { まーちゅう: 'ガネーシャ' } })],
+		['2つのキーに同じ呼び名', JSON.stringify({ names: { メジェド: 'ハナコ', 藤さん: 'ハナコ' } })],
 	]) {
 		const r = call(realHook, project(`broken-${label}`, config));
 		check(`呼び名：設定が壊れている（${label}）: 終了コード 0`, r.status === 0);
@@ -147,16 +152,63 @@ try {
 		);
 	}
 
-	// 呼び名の行の分だけ、team-rules.md の入る上限が減る。6人全部を40文字で書いても、今の team-rules.md が入ること
+	// 呼び名の行の分だけ、team-rules.md の入る上限が減る。6人全部を20文字で書いても、今の team-rules.md が入ること
+	// （同じ呼び名は付けられないので、字を変えて20文字にする）
 	const longest = {};
-	for (const name of ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう']) {
-		longest[name] = 'あ'.repeat(40);
-	}
+	['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう'].forEach((name, i) => {
+		longest[name] = String.fromCharCode(0x3042 + i * 2).repeat(20);
+	});
 	const fullNamed = call(realHook, project('full-named', JSON.stringify({ names: longest })));
 	check(
-		'呼び名：6人全部を40文字で書いても、今の team-rules.md の本文が入る（1万文字以下）',
+		'呼び名：6人全部を20文字で書いても、今の team-rules.md の本文が入る（1万文字以下）',
 		fullNamed.context.includes(rulesText.trim()) && fullNamed.context.includes(NAMES_HEAD) && fullNamed.context.length <= MAX_LENGTH
 	);
+
+	// 今使っている形の呼び名は入る
+	const okNames = project('ok-names', JSON.stringify({ names: { ガネーシャ: 'アヤ', メジェド: 'ハナコ', まーちゅう: 'ゆう', 健さん: 'ケン', 藤さん: 'Aya', 純ちゃん: 'ジュン ちゃん' } }));
+	check('呼び名：今使っている形の呼び名が入る', call(realHook, okNames).context.includes(`${NAMES_HEAD}ガネーシャ＝アヤ、メジェド＝ハナコ、健さん＝ケン、藤さん＝Aya、純ちゃん＝ジュン ちゃん、まーちゅう＝ゆう。`));
+	check('呼び名：ハナ子も入る', call(realHook, project('hanako', JSON.stringify({ names: { メジェド: 'ハナ子' } }))).context.includes(`${NAMES_HEAD}メジェド＝ハナ子。`));
+
+	// worktree：メインのチェックアウトにだけ names がある（#110。ガードと同じ根を読む）
+	function worktreeOf(name, mainConfig) {
+		const main = path.join(sandbox, `${name}-main`);
+		mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+		writeFileSync(path.join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n', 'utf8');
+		if (mainConfig !== null) {
+			mkdirSync(path.join(main, '.claude'), { recursive: true });
+			writeFileSync(path.join(main, '.claude', 'ai-team.json'), mainConfig, 'utf8');
+		}
+		const wt = path.join(sandbox, `${name}-wt`);
+		mkdirSync(wt, { recursive: true });
+		writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`, 'utf8');
+
+		return wt;
+	}
+
+	const wtOk = call(realHook, worktreeOf('wt-ok', JSON.stringify({ names: { メジェド: 'ハナコ' } })));
+	check('worktree：メインの呼び名が入る', wtOk.status === 0 && wtOk.context.includes(`${NAMES_HEAD}メジェド＝ハナコ。`));
+
+	const wtBroken = call(realHook, worktreeOf('wt-broken', '{ not json'));
+	check(
+		'worktree：メインの設定が壊れていれば、既定のままと書く（終了コード 0・本文は入る・直せないと書く）',
+		wtBroken.status === 0 && !wtBroken.context.includes(NAMES_HEAD) && wtBroken.context.includes('呼び名は既定のまま') && wtBroken.context.includes('このセッションからは直せない') && wtBroken.context.includes(rulesText.trim())
+	);
+
+	const wtNone = call(realHook, worktreeOf('wt-none', null));
+	check('worktree：メインに設定が無ければ、対応の行は入らない', wtNone.status === 0 && !wtNone.context.includes(NAMES_HEAD));
+
+	// worktree 自身の設定を先に使う
+	const wtOwn = worktreeOf('wt-own', JSON.stringify({ names: { メジェド: 'ハナコ' } }));
+	mkdirSync(path.join(wtOwn, '.claude'), { recursive: true });
+	writeFileSync(path.join(wtOwn, '.claude', 'ai-team.json'), JSON.stringify({ names: { メジェド: 'ナナ' } }), 'utf8');
+	check('worktree：プロジェクトの根の呼び名を先に使う', call(realHook, wtOwn).context.includes(`${NAMES_HEAD}メジェド＝ナナ。`));
+
+	// gitRoots が broken を返しても止めない（.git のファイルに gitdir: の行が無い）
+	const gitBroken = path.join(sandbox, 'git-broken');
+	mkdirSync(gitBroken, { recursive: true });
+	writeFileSync(path.join(gitBroken, '.git'), 'garbage\n', 'utf8');
+	const gitBrokenResult = call(realHook, gitBroken);
+	check('gitRoots が broken でも、終了コード 0 で本文が入る', gitBrokenResult.status === 0 && gitBrokenResult.context.includes(rulesText.trim()));
 
 	const hugeNamed = fake('huge-named', 'あ'.repeat(MAX_LENGTH + 100));
 	const hugeNamedResult = call(hugeNamed.hook, named);

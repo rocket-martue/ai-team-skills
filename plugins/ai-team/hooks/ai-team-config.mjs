@@ -36,8 +36,20 @@ const CONTAINER_KEYS = ['setup', 'test'];
 // 呼び名を変えられる、既定の名前（names のキー）。文書の中の名前は、この既定の名前で書いてある。
 export const DEFAULT_NAMES = ['ガネーシャ', 'メジェド', '健さん', '藤さん', '純ちゃん', 'まーちゅう'];
 
-// 呼び名の長さの上限（文字数）。
-const NAME_MAX_LENGTH = 40;
+// 呼び名の長さの上限（文字数。前後の空白を取った後）。
+const NAME_MAX_LENGTH = 20;
+
+// 呼び名として受ける文字：文字（\p{L}）・結合文字（\p{M}）・数字（\p{N}）・空白（半角・全角）・「・」（U+30FB）「ー」（U+30FC）「ｰ」（U+FF70）だけ。
+// 句読点・かっこ・記号は受けない（呼び名に文や指示を混ぜて、SessionStart で文脈に入れる1行から効かせないため。#110）。
+const NAME_CHARS = /^[\p{L}\p{M}\p{N} 　・ーｰ]+$/u;
+
+// 呼び名に入っていてはいけない語（NFKC にそろえて小文字にしてから見る）。役割や許可を言い換える語を弾く。
+const NAME_FORBIDDEN_WORDS = ['承認', '許可', '確認', '解除', '無視', '指示', '命令', '権限', '管理者', '不要', '済み', 'approve', 'allow', 'ignore', 'admin', 'permission'];
+
+// 呼び名を比べるときのそろえ方（NFKC・小文字・空白なし）。
+function foldName(name) {
+	return name.normalize('NFKC').toLowerCase().replace(/[\s　]/gu, '');
+}
 
 // Windows と Mac（既定の APFS）のファイルシステムは大文字小文字を区別しない（.DEV.VARS と .dev.vars は同じファイル）。
 // パターンとの照合も包含の判定も、Windows と Mac では小文字にそろえてから行う（#100）。
@@ -317,6 +329,7 @@ function parseNames(value) {
 	}
 
 	const names = {};
+	const seen = {};
 
 	for (const [key, name] of Object.entries(value)) {
 		if (!DEFAULT_NAMES.includes(key)) {
@@ -339,6 +352,26 @@ function parseNames(value) {
 			throw new Error(`names の呼び名が ${NAME_MAX_LENGTH} 文字を超えています`);
 		}
 
+		if (!NAME_CHARS.test(trimmed)) {
+			throw new Error('names の呼び名に、文字・数字・空白・「・」「ー」以外（句読点・かっこ・記号など）があります');
+		}
+
+		const folded = foldName(trimmed);
+
+		if (NAME_FORBIDDEN_WORDS.some((word) => folded.includes(word))) {
+			throw new Error('names の呼び名に、使えない語があります');
+		}
+
+		// 役の取り違えを防ぐ：ほかの既定の名前と同じ呼び名・2つのキーで同じ呼び名は受けない。
+		if (DEFAULT_NAMES.some((other) => other !== key && foldName(other) === folded)) {
+			throw new Error('names の呼び名が、ほかの既定の名前と同じです');
+		}
+
+		if (Object.values(seen).includes(folded)) {
+			throw new Error('names で同じ呼び名を2つのキーに付けています');
+		}
+
+		seen[key] = folded;
 		names[key] = trimmed;
 	}
 
