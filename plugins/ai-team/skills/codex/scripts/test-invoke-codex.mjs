@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const wrapper = path.join(here, 'invoke-codex.mjs');
@@ -778,7 +778,7 @@ fs.writeFileSync(containerEntry, `
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { run } from ${JSON.stringify(new URL(`file:///${wrapper.replace(/\\/g, '/').replace(/^\//, '')}`).href)};
+import { run } from ${JSON.stringify(pathToFileURL(wrapper).href)};
 const env = process.env;
 const calls = [];
 const created = {};
@@ -820,10 +820,16 @@ function fake(args, opts = {}) {
 				fs.writeFileSync(dst, env.FAKE_CODEX_REPLY || 'fake container reply');
 				return ok();
 			}
+			// FAKE_DOCKER_CP_FAIL=prep（準備のコンテナへ）・ken（健さんのコンテナへ）で、写すのを失敗させる
+			const toKen = created[dst.split(':')[0]].includes('seccomp=unconfined');
+			if (env.FAKE_DOCKER_CP_FAIL === (toKen ? 'ken' : 'prep')) return fail();
 			const target = path.join(env.FAKE_DOCKER_CP, dst.replace(/[:/]/g, '_'));
 			fs.cpSync(src.replace(/[\\\\/]\\.$/, ''), target, { recursive: true });
 			return ok();
 		}
+		case 'container':
+			// 健さんのコンテナ（--rm なし）はまだある。準備のコンテナ（--rm）は終わって消えている
+			return created[a[a.length - 1]] && !created[a[a.length - 1]].includes('--rm') ? ok('[]') : fail();
 		case 'start': {
 			const isKen = created[a[a.length - 1]].includes('seccomp=unconfined');
 			if (!isKen) return env.FAKE_DOCKER_SETUP_FAIL ? fail() : ok();
@@ -895,11 +901,18 @@ function containerCase(name, fn) {
 
 containerCase('通る：準備と健さんのコンテナの形・写したもの・差分・頼みの文・返事・後始末', () => {
 	const ctx = makeContainerRepo();
+	ctx.write('gone.txt', 'gone\n');
+	ctx.write('.gitignore', 'ignored.log\n');
+	commitAll(ctx.git, 'more');
 	ctx.write('README.md', 'changed\n');
 	ctx.write('docs/新しい ファイル.md', 'new\n');
+	ctx.write('ignored.log', 'ignored\n');
+	fs.rmSync(path.join(ctx.repo, 'gone.txt'));
 	const tempBefore = listTemp();
 	const r = runContainer(ctx);
 	const creates = verb(r.calls, 'create');
+	// -v の値は、名前付きボリュームだけ（この PC のパスを bind mount しない）
+	const mounts = creates.flatMap((c) => c.flatMap((x, i) => (c[i - 1] === '-v' ? [x.split(':')[0]] : [])));
 	const prep = creates[0] || [];
 	const ken = creates[1] || [];
 	const copied = listCopied(r.cpDir);
@@ -915,7 +928,9 @@ containerCase('通る：準備と健さんのコンテナの形・写したも�
 		&& ken.includes('seccomp=unconfined') && ken.includes('/work/repo') && ken.some((x) => String(x) === 'ai-team-codex-home:/root/.codex') && !ken.includes('--rm')
 		&& [...prep, ...ken].filter((x) => x === 'ai-team-codex=1').length === 2
 		&& ![...prep, ...ken].some((x) => String(x).includes(ctx.repo))
+		&& mounts.length === 3 && mounts.every((m) => /^ai-team-codex-[a-z0-9-]+$/.test(m))
 		&& copied.includes('c1__work_repo/package.json') && copied.includes('c1__work_repo/docs/新しい ファイル.md') && copied.includes('c1__work_repo/.claude/ai-team.json')
+		&& !copied.some((p) => p.endsWith('/ignored.log') || p.endsWith('/gone.txt'))
 		&& diffText.startsWith('diff --git a/README.md b/README.md') && diffText.includes('+changed')
 		&& promptText.startsWith('ガネーシャから（コンテナの中のレビュー）') && promptText.includes('`npm test`') && promptText.includes('- docs/新しい ファイル.md')
 		&& afterInfo.every((c) => c[0] === '--context')
@@ -925,8 +940,7 @@ containerCase('通る：準備と健さんのコンテナの形・写したも�
 });
 
 for (const [name, setup, word, extraEnv] of [
-	['追跡していて変更の無い wp-config.php', (c) => { c.write('wp-config.php', '<?php\n'); commitAll(c.git, 'wp'); }, '秘密情報'],
-	['secretPatterns に当たる、追跡していて変更の無いファイル', (c) => { c.write('.claude/ai-team.json', j({ secretPatterns: ['private/**'], container: { setup: 'npm ci', test: 'npm test' } })); c.write('private/token.json', '{}\n'); commitAll(c.git, 'p'); }, '秘密情報'],
+	['差分に秘密情報（追跡している wp-config.php を書き換えた）', (c) => { c.write('wp-config.php', '<?php // a\n'); commitAll(c.git, 'wp'); c.write('wp-config.php', '<?php // b\n'); }, '秘密情報'],
 	['サブモジュール（gitlink）', (c) => { c.git('update-index', '--add', '--cacheinfo', `160000,${c.git('rev-parse', 'HEAD').trim()},sub`); }, 'サブモジュール'],
 	['未追跡の入れ子のリポジトリ', (c) => { c.write('nested/a.txt', 'a\n'); gitIn(path.join(c.repo, 'nested'), c.env, 'init', '-q'); }, '入れ子'],
 	['container の設定が無い', (c) => { c.write('.claude/ai-team.json', j({ secretPatterns: [] })); commitAll(c.git, 'no container'); }, 'container'],
@@ -949,7 +963,50 @@ if (!isWindows) {
 		const r = runContainer(ctx);
 		return [r.code !== 0 && r.stderr.includes('制御文字') && r.calls.length === 0, detail(r)];
 	});
+	containerCase('止まる（docker を呼ばない）：壊れたシンボリックリンク', () => {
+		const ctx = makeContainerRepo();
+		fs.symlinkSync(path.join(root, 'no-such-target'), path.join(ctx.repo, 'broken'));
+		const r = runContainer(ctx);
+		return [r.code !== 0 && r.stderr.includes('リンク') && r.calls.length === 0, detail(r)];
+	});
 }
+
+containerCase('通る：変更していない秘密情報（wp-config.php・.env.example・secretPatterns）は止めずに写さず、名前も頼みの文に入れない（D13）', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('.claude/ai-team.json', j({ secretPatterns: ['private/**'], container: { setup: 'npm ci', test: 'npm test' } }));
+	ctx.write('wp-config.php', '<?php\n');
+	ctx.write('.env.example', 'KEY=\n');
+	ctx.write('private/token.json', '{}\n');
+	commitAll(ctx.git, 'secrets');
+	ctx.write('README.md', 'changed\n');
+	const r = runContainer(ctx);
+	const copied = listCopied(r.cpDir);
+	const promptFile2 = copied.find((p) => p.endsWith('/prompt.md'));
+	const promptText = promptFile2 ? fs.readFileSync(path.join(r.cpDir, promptFile2), 'utf8') : '';
+	const ok = r.code === 0
+		&& copied.includes('c1__work_repo/package.json')
+		&& !copied.some((p) => p.endsWith('/wp-config.php') || p.endsWith('/.env.example') || p.includes('/private/'))
+		&& !/wp-config|\.env\.example|private\//.test(promptText);
+	return [ok, `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
+});
+
+containerCase('通る：DOCKER_HOST がこの PC（unix:// か npipe://）なら止まらず、--context を付けない', () => {
+	const ctx = makeContainerRepo();
+	const r = runContainer(ctx, { extraEnv: { DOCKER_HOST: isWindows ? 'npipe:////./pipe/fake' : 'unix:///run/user/1000/docker.sock' } });
+	return [r.code === 0 && r.calls.length > 0 && r.calls.every((c) => c[0] !== '--context' && c[0] !== 'context'), detail(r)];
+});
+
+containerCase('通る：-Base の差分に、未コミットの変更も入る', () => {
+	const ctx = makeContainerRepo();
+	ctx.git('checkout', '-q', '-b', 'feature');
+	ctx.write('feature.txt', 'feat\n');
+	commitAll(ctx.git, 'feat');
+	ctx.write('README.md', 'uncommitted\n');
+	const r = runContainer(ctx, { args: ['-Mode', 'review', '-Base', 'main', '-Container'] });
+	const diffFile = listCopied(r.cpDir).find((p) => p.endsWith('/review.diff'));
+	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
+	return [r.code === 0 && diffText.includes('diff --git a/feature.txt b/feature.txt') && diffText.includes('+uncommitted'), detail(r)];
+});
 
 containerCase('止まる（docker を呼ばない）：根より下のリンク（Windows はジャンクション）', () => {
 	const ctx = makeContainerRepo();
@@ -1004,10 +1061,23 @@ containerCase('通る：この PC の git の設定（diff.external・color.ui�
 	ctx.git('config', 'color.ui', 'always');
 	ctx.git('config', 'diff.noprefix', 'true');
 	ctx.git('config', 'core.fsmonitor', hook.replace(/\\/g, '/'));
+	// Windows の git はフックを sh で起動する。テストの PATH（git の cmd のフォルダだけ）には sh が無いので、Git の sh のフォルダを足す
+	// （git の場所は Git\cmd・Git\mingw64\bin・Git\ucrt64\bin などがあるので、上へたどって usr\bin\sh.exe を探す）
+	if (isWindows) {
+		let shDir = null;
+		for (let d = gitDir, i = 0; i < 4 && shDir === null; d = path.dirname(d), i++) {
+			if (fs.existsSync(path.join(d, 'usr', 'bin', 'sh.exe'))) shDir = path.join(d, 'usr', 'bin');
+		}
+		if (shDir !== null) ctx.env.PATH = `${ctx.env.PATH};${shDir}`;
+	}
+	// 対照：素の git status ならフックが動く（動かなければ、この確かめは空で通る）
+	ctx.git('status', '--porcelain');
+	const control = fs.existsSync(marker);
+	fs.rmSync(marker, { force: true });
 	const r = runContainer(ctx);
 	const diffFile = listCopied(r.cpDir).find((p) => p.endsWith('/review.diff'));
 	const diffText = diffFile ? fs.readFileSync(path.join(r.cpDir, diffFile), 'utf8') : '';
-	return [r.code === 0 && diffText.startsWith('diff --git a/README.md b/README.md') && !diffText.includes('\u001b[') && !fs.existsSync(marker), `${detail(r)} marker=${fs.existsSync(marker)}`];
+	return [control && r.code === 0 && diffText.startsWith('diff --git a/README.md b/README.md') && !diffText.includes('\u001b[') && !fs.existsSync(marker), `${detail(r)} control=${control} marker=${fs.existsSync(marker)}`];
 });
 
 containerCase('通る：イメージが無ければプラグインの container/ だけをコンテキストに作り、前の版を消す', () => {
@@ -1039,6 +1109,8 @@ for (const [name, extraEnv, word, wantCreate] of [
 	['準備のコマンドが失敗する', { FAKE_DOCKER_SETUP_FAIL: '1' }, 'container.setup', true],
 	['準備が /work/repo をリンクにすり替えた（97）', { FAKE_DOCKER_START_CODE: '97' }, 'すり替え', true],
 	['返事が取れない', { FAKE_DOCKER_NO_REPLY: '1' }, '返事', true],
+	['準備のコンテナへ写せない', { FAKE_DOCKER_CP_FAIL: 'prep' }, '作業ツリーをコンテナに写せません', true],
+	['健さんのコンテナへ写せない', { FAKE_DOCKER_CP_FAIL: 'ken' }, 'コンテナに写せません', true],
 ]) {
 	containerCase(`止まる：${name}（作ったものは消す）`, () => {
 		const ctx = makeContainerRepo();
@@ -1047,7 +1119,8 @@ for (const [name, extraEnv, word, wantCreate] of [
 		const creates = verb(r.calls, 'create').length;
 		const removedAll = verb(r.calls, 'volume').filter((c) => c.includes('create')).length === verb(r.calls, 'volume').filter((c) => c.includes('rm')).length;
 		const ok = r.code !== 0 && r.stderr.includes(word) && (wantCreate ? creates > 0 : creates === 0) && removedAll && listTemp() === tempBefore
-			&& (!wantCreate || name.includes('準備のコマンド') || verb(r.calls, 'rm').some((c) => c.includes('c2')));
+			// 作ったコンテナは、全部 rm -f を打っている
+			&& verb(r.calls, 'create').every((_, i) => verb(r.calls, 'rm').some((c) => c.includes(`c${i + 1}`)));
 		return [ok, detail(r)];
 	});
 }

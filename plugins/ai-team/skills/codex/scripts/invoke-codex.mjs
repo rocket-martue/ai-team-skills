@@ -249,9 +249,21 @@ const SWAPPED_REPO = 97;
 // 名前に入っていたら止める文字（制御文字・U+2028・U+2029）
 const BAD_NAME = /[\u0000-\u001f\u007f\u2028\u2029]/;
 
+// docker を PATH から絶対パスで探す（Windows は、名前だけで起動するとカレントディレクトリの docker.exe を先に拾うため）。無ければ null
+function findDocker() {
+	const name = isWindows ? 'docker.exe' : 'docker';
+	for (const dir of (process.env.PATH || '').split(path.delimiter).filter((d) => d.trim() !== '' && path.isAbsolute(d))) {
+		const bin = path.join(dir, name);
+		if (isWindows ? isFile(bin) : isExecutable(bin)) return bin;
+	}
+	return null;
+}
+
 // docker の呼び方。テストは run() の deps.docker で偽物に差し替える（環境変数などの、リポジトリの設定から差し込める口は作らない）
 function realDocker(args, opts = {}) {
-	return spawnSync('docker', args, { maxBuffer: 64 * 1024 * 1024, ...opts });
+	const bin = findDocker();
+	if (bin === null) stopWrapper('docker が見つかりません。Docker Desktop（か Docker Engine）を入れて起動してください（devcontainer の中では、Docker が使えなければ -Container は使えません）。');
+	return spawnSync(bin, args, { maxBuffer: 64 * 1024 * 1024, ...opts });
 }
 
 function codexHome() {
@@ -309,6 +321,8 @@ function checkCodexForContainer(codex) {
 	const v = spawnSync(codex.command, [...codex.prefix, '--version'], { encoding: 'utf8' });
 	const m = (v.stdout || '').match(/(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)/);
 	if (v.status !== 0 || !m) stopWrapper('codex の版が分かりません（codex --version が失敗しました）。');
+	// イメージのタグに使えない文字（+ など）を含む版は扱わない
+	if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(m[1])) stopWrapper(`codex の版（${m[1]}）は、イメージのタグに使えない文字を含むので、-Container を使いません。`);
 	const agents = path.join(codexHome(), 'AGENTS.md');
 	if (!isFile(agents)) stopWrapper(`健さんの決まり（${agents}）がありません。README の「PC ごとに1回」のとおりに置いてください。`);
 	if (!readUtf8(agents).includes(AGENTS_MARK)) {
@@ -393,21 +407,31 @@ function makeSnapshot(top, compare, workDir, configModule, checkRoots) {
 		}
 	});
 
-	// 5. 名前で確かめる（D10。中身はまだ写していない）。どのパスかは手元にだけ出す
-	const stop = (why, list) => stopWrapper(`${why}ので、-Container を使いません（外して写すと、外し方の穴から漏れるため）: ${list.slice(0, 10).join(', ')}${list.length > 10 ? ` ほか ${list.length - 10} 件` : ''}`);
+	// 5. 名前で確かめる（D10・D13。中身はまだ写していない）。どのパスかは手元にだけ出す
+	const stop = (why, list) => stopWrapper(`${why}ので、-Container を使いません: ${list.slice(0, 10).join(', ')}${list.length > 10 ? ` ほか ${list.length - 10} 件` : ''}`);
 	const badNames = [...candidates, ...diffPaths].filter((p) => BAD_NAME.test(p));
 	if (badNames.length > 0) stop('名前に制御文字（改行など）を含むファイルがある', badNames.map((p) => JSON.stringify(p)));
 	const gitlinks = staged.stdout.split('\0').filter((e) => e.startsWith('160000 ')).map((e) => e.slice(e.indexOf('\t') + 1));
 	if (gitlinks.length > 0 || candidates.includes('.gitmodules')) stop('サブモジュールがある', gitlinks.length > 0 ? gitlinks : ['.gitmodules']);
 	const nested = candidates.filter((p) => p.endsWith('/'));
 	if (nested.length > 0) stop('未追跡の入れ子のリポジトリがある（中のファイルを照らせない）', nested);
+	// 秘密情報：差分に入っていれば止める（中身が健さんに渡るため）。差分に入っていないもの（変更していない wp-config.php・.env.example など）は、
+	// 写さないだけにする（D13）。当たったパスは共有モジュールが改行区切りで返す。名前に改行などを含むファイルは上で止めているので、割れない
 	const check = runConfigCheck(configModule, checkRoots, [...candidates, ...diffPaths]);
-	if (check.code === 3) stop('秘密情報のファイルがある（変更していなくても、写すと Codex に送られる）', [...new Set(check.out.split('\n').filter((s) => s !== ''))]);
-	if (check.code === 2) stopWrapper(`設定ファイル（.claude/ai-team.json）が壊れているので、健さんを呼びません: ${check.out}`);
-	if (check.code !== 0 || check.out.split('\n')[0].trim() !== 'ai-team-config: ok') stopWrapper('秘密情報の確かめが済んだか分からないので、健さんを呼びません。');
+	let secrets = new Set();
+	if (check.code === 3) {
+		secrets = new Set(check.out.split('\n').filter((s) => s !== ''));
+		const inDiff = [...new Set(diffPaths.filter((p) => secrets.has(p)))];
+		if (inDiff.length > 0) stop('差分（健さんに渡る変更）に秘密情報のファイルがある', inDiff);
+	} else if (check.code === 2) {
+		stopWrapper(`設定ファイル（.claude/ai-team.json）が壊れているので、健さんを呼びません: ${check.out}`);
+	} else if (check.code !== 0 || check.out.split('\n')[0].trim() !== 'ai-team-config: ok') {
+		stopWrapper('秘密情報の確かめが済んだか分からないので、健さんを呼びません。');
+	}
+	const toCopy = candidates.filter((p) => !secrets.has(p));
 	// リンク：根の実体を基準に、候補の実体が「根の実体＋相対パス」と違えば止める（根より上のリンクと、根の綴りの大小は比べない）
 	const realTop = fs.realpathSync.native(top);
-	const links = candidates.filter((rel) => {
+	const links = toCopy.filter((rel) => {
 		const full = path.join(top, rel);
 		try {
 			if (fs.lstatSync(full).isSymbolicLink()) return true;
@@ -421,7 +445,7 @@ function makeSnapshot(top, compare, workDir, configModule, checkRoots) {
 	// 6. 写す。写す直前にもう一度、リンクに変わっていないかを見る
 	const repoDir = path.join(workDir, 'repo');
 	fs.mkdirSync(repoDir);
-	for (const rel of candidates) {
+	for (const rel of toCopy) {
 		const full = path.join(top, rel);
 		if (fs.lstatSync(full).isSymbolicLink()) stop('写す途中でリンクに変わったファイルがある', [rel]);
 		const dest = path.join(repoDir, rel);
@@ -431,7 +455,8 @@ function makeSnapshot(top, compare, workDir, configModule, checkRoots) {
 	const reviewDir = path.join(workDir, 'review');
 	fs.mkdirSync(path.join(reviewDir, 'out'), { recursive: true });
 	fs.writeFileSync(path.join(reviewDir, 'review.diff'), patch);
-	return untracked.filter((p) => candidates.includes(p));
+	// 頼みの文に載せる未追跡のファイルも、写したものだけ（写さなかった秘密情報の名前は送らない）
+	return untracked.filter((p) => toCopy.includes(p));
 }
 
 // 13. 頼みの文（ラッパーが組み立てる）
@@ -442,7 +467,7 @@ function buildContainerPrompt(container, untracked) {
 		'次の変更をレビューしてください。',
 		'',
 		'- 見る差分：/review/review.diff',
-		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは入っていません）',
+		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください）',
 		`- テスト：作業ツリーで \`${container.test}\` を打ち、その結果も根拠にしてください（準備のコマンド \`${container.setup}\` は打ってあります）`,
 		'- 作業ツリーのファイルを書き換えないでください（テストが作るキャッシュや一時ファイルは除く）',
 		'- 指摘は、/work/repo からの相対パスのファイル:行と、重要度（必須／推奨／表記）を付けて書いてください',
@@ -465,9 +490,8 @@ function reviewInContainer({ docker, image, workDir, container, agents, state })
 	const prepId = prep.stdout.trim();
 	state.containers.push(prepId);
 	if (docker.run(['cp', `${path.join(workDir, 'repo')}${path.sep}.`, `${prepId}:/work/repo`]).code !== 0) stopWrapper('作業ツリーをコンテナに写せませんでした。');
+	// --rm なので、終われば消えている。途中で切れたときのために、後始末の一覧には残す（消えていれば後始末は黙って飛ばす）
 	const setupCode = docker.logged(['start', '-a', prepId], path.join(workDir, 'setup.log'), '準備のコマンド（container.setup）');
-	// --rm なので、終われば消えている
-	state.containers.splice(state.containers.indexOf(prepId), 1);
 	if (setupCode !== 0) stopWrapper(`準備のコマンド（container.setup）が失敗しました（終了コード ${setupCode}）。`);
 
 	// 12. 健さんのコンテナ
@@ -485,7 +509,14 @@ function reviewInContainer({ docker, image, workDir, container, agents, state })
 	// 14. 返事を取り出す
 	const lastMessage = path.join(workDir, 'last-message.md');
 	docker.run(['cp', `${kenId}:/review/out/last-message.md`, lastMessage]);
-	if (!isFile(lastMessage)) stopWrapper(`健さんの返事が取れませんでした（終了コード ${code}）。`, code === 0 ? 1 : code);
+	// docker cp はリンクをリンクのまま写すので、ふつうのファイルのときだけ読む（リンク先のこの PC のファイルを読んで出さないため）
+	let regular = false;
+	try {
+		regular = fs.lstatSync(lastMessage).isFile();
+	} catch {
+		regular = false;
+	}
+	if (!regular) stopWrapper(`健さんの返事が取れませんでした（終了コード ${code}）。`, code === 0 ? 1 : code);
 	const reply = readUtf8(lastMessage);
 	process.stdout.write(reply.endsWith('\n') ? reply : `${reply}\n`);
 	return code;
@@ -495,7 +526,8 @@ function reviewInContainer({ docker, image, workDir, container, agents, state })
 function cleanupContainer(docker, state, workDir) {
 	const left = [];
 	for (const id of state.containers) {
-		if (docker.run(['rm', '-f', id]).code !== 0) left.push(`コンテナ ${id}（docker rm -f ${id}）`);
+		// 消せなくても、もう無ければ（--rm の準備のコンテナ）知らせない
+		if (docker.run(['rm', '-f', id]).code !== 0 && docker.run(['container', 'inspect', id]).code === 0) left.push(`コンテナ ${id}（docker rm -f ${id}）`);
 	}
 	for (const v of state.volumes) {
 		if (docker.run(['volume', 'rm', v]).code !== 0) left.push(`ボリューム ${v}（docker volume rm ${v}）`);
