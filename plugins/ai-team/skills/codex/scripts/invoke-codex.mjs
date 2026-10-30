@@ -154,24 +154,34 @@ function isExecutable(p) {
 let gitPrefix = [];
 
 // git を呼ぶ（失敗しても例外にせず、終了コードと出力を返す）
-function git(args, cwd) {
-	const r = gitRaw(args, cwd);
-	return { code: r.code, stdout: r.stdout.toString('utf8') };
+// env を渡すと、今の環境に重ねる（エラーの文を英語で読むため）
+function git(args, cwd, env) {
+	const r = gitRaw(args, cwd, env);
+	return { code: r.code, stdout: r.stdout.toString('utf8'), stderr: r.stderr.toString('utf8') };
 }
 
 // 出力をバイト列のまま返す（差分は、元のファイルのバイトのまま渡すため）
-function gitRaw(args, cwd) {
-	const r = spawnSync('git', [...gitPrefix, ...args], { cwd, maxBuffer: 1024 * 1024 * 1024 });
-	return { code: r.status === null ? 1 : r.status, stdout: r.stdout || Buffer.alloc(0) };
+function gitRaw(args, cwd, env) {
+	const r = spawnSync('git', [...gitPrefix, ...args], { cwd, maxBuffer: 1024 * 1024 * 1024, ...(env ? { env: { ...process.env, ...env } } : {}) });
+	return { code: r.status === null ? 1 : r.status, stdout: r.stdout || Buffer.alloc(0), stderr: r.stderr || Buffer.alloc(0) };
 }
 
 // メインのチェックアウト（worktree list の1件目）の根。worktree から呼ばれても、そこの設定ファイルも読むため。
 // -z で読む（名前に改行・末尾の空白があっても崩れないように）。求められなければ、作業の根に黙って戻らず止める
 // （メインの根の設定ファイルを読み落とすため）。ただし Git のリポジトリでないフォルダ（consult は通す。#97）は、作業の根だけで進める
 function getMainRoot(repoRoot) {
-	const r = git(['-C', repoRoot, 'worktree', 'list', '--porcelain', '-z'], repoRoot);
+	// エラーの文で見分けるので、git の文を英語にそろえる
+	const english = { LC_ALL: 'C', LANGUAGE: 'C' };
+	const r = git(['-C', repoRoot, 'worktree', 'list', '--porcelain', '-z'], repoRoot, english);
 	if (r.code !== 0) {
-		if (git(['-C', repoRoot, 'rev-parse', '--is-inside-work-tree'], repoRoot).code !== 0) return repoRoot;
+		// -z は Git 2.36 から。古い git は知らない（-z 無しで読み直す仕組みは作らない）
+		if (/unknown (switch|option)/i.test(r.stderr)) stopWrapper('Git 2.36 以降が要ります（git worktree list の -z を使います）。');
+		const inside = git(['-C', repoRoot, 'rev-parse', '--is-inside-work-tree'], repoRoot, english);
+		if (inside.code !== 0) {
+			// リポジトリでないと分かるのは、この文があるときだけ（safe.directory・git が無い、などは止める）
+			if (/not a git repository/i.test(inside.stderr)) return repoRoot;
+			stopWrapper(`git でリポジトリかを確かめられません（safe.directory の設定や git の入れ方を見てください）: ${repoRoot} ${inside.stderr.trim()}`);
+		}
 		stopWrapper(`メインのチェックアウトの場所を求められません（git worktree list が失敗しました）: ${repoRoot}`);
 	}
 	const first = r.stdout.split('\0').find((f) => f.startsWith('worktree '));
@@ -190,23 +200,73 @@ function isDirectory(p) {
 }
 
 // 健さんが -WorkingDirectory の下を読めるので、認証情報や設定が入るホームの下の場所は指させない（そのもの・中のどちらも）。
-// 見たままのパスと、リンクをたどった実体のパスの両方を、ホーム（見たままと実体）の下の場所と比べる。返り値は当たった場所の名前（無ければ null）
+// 見たままのパスと、リンクをたどった実体のパスの両方を、守る場所（見たままと実体の両方）と比べる。
+// 実体は fs.realpathSync.native で取る（Windows の 8.3 の短い名前（CODEX~1）は、JS 版の realpathSync では展開されないため）。
+// 大文字小文字は Windows・Mac でそろえる（sameCaseFolded。取り違えると止める側に倒れる）。CODEX_HOME を別の場所にしていれば、そこも守る
 const SENSITIVE_HOME_DIRS = ['.codex', '.ssh', '.aws', '.gnupg', '.config/gh', '.claude'];
-function sensitiveHomeDir(dir) {
-	const home = os.homedir();
-	const homes = [path.resolve(home)];
-	const realHome = realOrNull(home);
-	if (realHome !== null) homes.push(realHome);
-	const dirs = [path.resolve(dir)];
-	const realDir = realOrNull(dir);
-	if (realDir !== null) dirs.push(realDir);
-	for (const h of homes) {
-		for (const name of SENSITIVE_HOME_DIRS) {
-			const loc = path.join(h, ...name.split('/'));
-			if (dirs.some((d) => sameLocation(d, loc) || isUnderLocation(d, loc + path.sep))) return name;
-		}
+
+function realNative(p) {
+	try {
+		return fs.realpathSync.native(p);
+	} catch {
+		return null;
+	}
+}
+
+function withSep(p) {
+	return p.endsWith(path.sep) ? p : p + path.sep;
+}
+
+function isUnderFolded(child, parent) {
+	const a = withSep(child);
+	const b = withSep(parent);
+	return foldsForMatch ? a.toLowerCase().startsWith(b.toLowerCase()) : a.startsWith(b);
+}
+
+// 見たままのパスと実体（取れれば）
+function pathVariants(p) {
+	const out = [path.resolve(p)];
+	const real = realNative(p);
+	if (real !== null) out.push(real);
+	return out;
+}
+
+function homeVariants() {
+	return pathVariants(os.homedir());
+}
+
+// 守る場所：[{ label, loc }]。守る場所そのものがリンクなら、リンク先も入れる（リンク先を直接渡すとすり抜けるため）
+function protectedLocations() {
+	const out = [];
+	const add = (label, loc) => {
+		for (const v of pathVariants(loc)) out.push({ label, loc: v });
+	};
+	for (const h of homeVariants()) {
+		for (const name of SENSITIVE_HOME_DIRS) add(`ホームの ${name}`, path.join(h, ...name.split('/')));
+	}
+	if ((process.env.CODEX_HOME || '').trim() !== '') add('CODEX_HOME の場所', path.resolve(process.env.CODEX_HOME));
+	return out;
+}
+
+// p（そのもの・中）が守る場所に当たれば、その名前を返す（無ければ null）
+function sensitiveLocation(p) {
+	const candidates = pathVariants(p);
+	for (const { label, loc } of protectedLocations()) {
+		if (candidates.some((c) => sameCaseFolded(c, loc) || isUnderFolded(c, loc))) return label;
 	}
 	return null;
+}
+
+// -WorkingDirectory が、ホームそのもの・その祖先（C:\Users・ドライブの根）なら true。下に認証情報の場所を全部含むため
+function isHomeOrAncestor(dir) {
+	const candidates = pathVariants(dir);
+	return homeVariants().some((h) => candidates.some((c) => sameCaseFolded(c, h) || isUnderFolded(h, c)));
+}
+
+function checkWorkingDirectory(dir) {
+	const sensitive = sensitiveLocation(dir);
+	if (sensitive !== null) stopWrapper(`作業の根が${sensitive}の中を指しています（認証情報や設定が入る場所を、健さんに読ませません）: ${dir}`);
+	if (isHomeOrAncestor(dir)) stopWrapper(`作業の根がホームそのもの（かその上のフォルダ）を指しています（下に認証情報や設定が入る場所を全部含むため、健さんに読ませません）: ${dir}`);
 }
 
 // 共有モジュールの check に渡すパス（リポジトリの根からの相対。区切りは /）。根の中なら相対パス、外なら絶対パス
@@ -216,9 +276,16 @@ function relOrAbs(p, base) {
 }
 
 // 健さんに送るファイル（頼みの文・参照画像）を照らすパス。見たままのパスと、リンクをたどった実体のパスの両方
+// real は、入力（.. を畳む前）に fs.realpathSync.native をかけたもの。送るのも読むのもこの実体なので、照らすファイルと送るファイルがずれない
 function secretCandidates(file, repoRoot, realRoot) {
-	const seen = path.resolve(file);
-	return [relOrAbs(seen, repoRoot), relOrAbs(fs.realpathSync.native(seen), realRoot)];
+	return [relOrAbs(path.resolve(file.seen), repoRoot), relOrAbs(file.real, realRoot)];
+}
+
+// 送るファイルを決める：入力のまま実体を取る（path.resolve で .. を畳むと、リンクの先の親ではなく見たままの親になりずれるため）
+function resolveSendFile(input, what) {
+	const real = realNative(input);
+	if (real === null || !isFile(real)) stopWrapper(`${what}が見つかりません: ${input}`);
+	return { seen: input, real };
 }
 
 // 頼みの文の頭（最初の空でない行）は、呼んだ人の名前で始める決まり（SKILL.md）。健さんの AGENTS.md は、この頭が無いと
@@ -226,7 +293,8 @@ function secretCandidates(file, repoRoot, realRoot) {
 const PROMPT_SENDERS = ['ガネーシャから', 'メジェドから'];
 function checkPromptHeader(prompt) {
 	const first = prompt.split(/\r?\n/).find((l) => l.trim() !== '');
-	if (first === undefined || !PROMPT_SENDERS.some((s) => first.startsWith(s))) {
+	// 前後の空白を外してから見る（行頭の空白・全角空白があっても通す）
+	if (first === undefined || !PROMPT_SENDERS.some((s) => first.trim().startsWith(s))) {
 		stopWrapper(`頼みの文の頭（最初の空でない行）が「${PROMPT_SENDERS.join('」か「')}」で始まっていません。この頭が無いと、健さんの決まりのうち範囲の制限と「秘密情報を開かない」が外れるため、呼びません。`);
 	}
 }
@@ -601,7 +669,15 @@ function cleanupContainer(docker, state, workDir) {
 	if (left.length > 0) process.stderr.write(`invoke-codex: 後始末で消せなかったものがあります。手で消してください:\n${left.map((l) => `  ${l}`).join('\n')}\n`);
 }
 
+// 最低要件：Node.js 22 以降（version は、テストが差し込める）
+const MIN_NODE_MAJOR = 22;
+export function checkNodeVersion(version = process.versions.node) {
+	const major = Number.parseInt(String(version).split('.')[0], 10);
+	if (!(major >= MIN_NODE_MAJOR)) stopWrapper(`Node.js ${MIN_NODE_MAJOR} 以降が要ります（今は ${version}）。`);
+}
+
 function main(cleanups, argv, deps) {
+	checkNodeVersion();
 	const opts = parseArgs(argv);
 	const mode = opts.Mode;
 	if (opts.Container) gitPrefix = ['--no-optional-locks', '-c', 'core.fsmonitor=false'];
@@ -617,30 +693,32 @@ function main(cleanups, argv, deps) {
 	const callerDirectory = process.cwd();
 	const workingDirectory = opts.WorkingDirectory.trim() === '' ? callerDirectory : opts.WorkingDirectory;
 	if (!isDirectory(workingDirectory)) stopWrapper(`作業の根が見つかりません: ${workingDirectory}`);
-	const sensitive = sensitiveHomeDir(workingDirectory);
-	if (sensitive !== null) stopWrapper(`作業の根がホームの ${sensitive} の中を指しています（認証情報や設定が入る場所を、健さんに読ませません）: ${workingDirectory}`);
+	checkWorkingDirectory(workingDirectory);
 	let repoRoot = path.resolve(workingDirectory);
 	if (opts.Container) {
 		// 写しと差分は、-WorkingDirectory によらず、リポジトリの根から作る
 		const top = git(['rev-parse', '--show-toplevel'], repoRoot);
 		if (top.code !== 0 || top.stdout.trim() === '') stopWrapper(`-Container は Git のリポジトリでだけ使えます: ${repoRoot}`);
 		repoRoot = path.resolve(top.stdout.trim());
+		// 根を置き換えた後も、同じ照らしをする
+		checkWorkingDirectory(repoRoot);
 	}
 
 	// 健さんに送るファイル（頼みの文・参照画像）。見つかるかをここで確かめ、中身は秘密情報の確認の後で読む
-	let promptPath = '';
+	// 各ファイルは { seen: 入力のまま, real: 実体 }。照らすのも読む・写すのも real
+	let promptFileInfo = null;
 	const imageFiles = [];
 	if (mode !== 'review' && mode !== 'check') {
-		if (opts.PromptFile.trim() === '' || !isFile(opts.PromptFile)) stopWrapper(`頼みの文のファイル（-PromptFile）が見つかりません: ${opts.PromptFile}`);
-		promptPath = path.resolve(opts.PromptFile);
+		if (opts.PromptFile.trim() === '') stopWrapper(`頼みの文のファイル（-PromptFile）が見つかりません: ${opts.PromptFile}`);
+		promptFileInfo = resolveSendFile(opts.PromptFile, '頼みの文のファイル（-PromptFile）');
 	}
 	if (mode === 'image') {
 		for (const raw of opts.Image.split('|')) {
 			const src = raw.trim();
 			if (src === '') continue;
-			const full = path.isAbsolute(src) ? src : path.join(callerDirectory, src);
-			if (!isFile(full)) stopWrapper(`参照画像が見つかりません: ${src}`);
-			imageFiles.push(full);
+			// path.join は .. を畳むので使わない（リンクの先の親を取り違えないため）
+			const full = path.isAbsolute(src) ? src : `${callerDirectory.replace(/[\\/]+$/, '')}${path.sep}${src}`;
+			imageFiles.push(resolveSendFile(full, `参照画像（${src}）`));
 		}
 		if (imageFiles.length === 0) stopWrapper('image には参照画像（-Image）を1枚以上渡してください。');
 	}
@@ -706,15 +784,20 @@ function main(cleanups, argv, deps) {
 
 	// 健さんに送るファイル（頼みの文・参照画像）も、送る前に同じ照らしに通す。見たままのパスと実体のパスのどちらかが秘密情報なら止める
 	// （リンクで秘密情報を指させないため）。中身はまだ読んでいない
-	const sendFiles = [promptPath, ...imageFiles].filter((p) => p !== '');
+	const sendFiles = [promptFileInfo, ...imageFiles].filter((f) => f !== null);
 	if (sendFiles.length > 0) {
+		// 守る場所（~/.codex/auth.json・~/.aws/credentials など）の中のファイルも送らない
+		for (const f of sendFiles) {
+			const where = sensitiveLocation(f.seen) ?? sensitiveLocation(f.real);
+			if (where !== null) stopWrapper(`頼みの文のファイル（または参照画像）が${where}の中にあるので、健さんに送りません: ${f.seen}`);
+		}
 		const realRoot = fs.realpathSync.native(repoRoot);
-		const entries = sendFiles.map((file) => ({ file, paths: secretCandidates(file, repoRoot, realRoot) }));
+		const entries = sendFiles.map((f) => ({ file: f.seen, paths: secretCandidates(f, repoRoot, realRoot) }));
 		const sent = runConfigCheck(configModule, checkRoots, entries.flatMap((e) => e.paths));
 		if (sent.code === 3) {
 			const hits = new Set(sent.out.split('\n').filter((s) => s !== ''));
 			const hitFiles = entries.filter((e) => e.paths.some((p) => hits.has(p))).map((e) => e.file);
-			stopWrapper(`頼みの文のファイル（または参照画像）が秘密情報なので、健さんに送りません: ${(hitFiles.length > 0 ? hitFiles : sendFiles).join(', ')}`);
+			stopWrapper(`頼みの文のファイル（または参照画像）が秘密情報なので、健さんに送りません: ${(hitFiles.length > 0 ? hitFiles : sendFiles.map((f) => f.seen)).join(', ')}`);
 		}
 		if (sent.code !== 0 || sent.out.split('\n')[0].trim() !== 'ai-team-config: ok') {
 			stopWrapper('頼みの文・参照画像の秘密情報の確かめが済んだか分からないので、健さんを呼びません。');
@@ -722,8 +805,8 @@ function main(cleanups, argv, deps) {
 	}
 
 	let prompt = '';
-	if (promptPath !== '') {
-		prompt = readUtf8(promptPath);
+	if (promptFileInfo !== null) {
+		prompt = readUtf8(promptFileInfo.real);
 		if (prompt.trim() === '') stopWrapper('頼みの文が空です。');
 		checkPromptHeader(prompt);
 	}
@@ -806,12 +889,12 @@ function main(cleanups, argv, deps) {
 			// （Codex の -i は値をカンマで分けるので、元の名前や親のパスにカンマがあると割れる）
 			const refs = [];
 			let i = 0;
-			for (const full of imageFiles) {
-				// 元のファイルの場所を控える（前に作った画像を参照に渡したとき、それを今回の出力と取り違えないため）
-				refOriginals.push(path.resolve(full));
+			for (const img of imageFiles) {
+				// 元のファイルの場所（実体）を控える（前に作った画像を参照に渡したとき、それを今回の出力と取り違えないため）
+				refOriginals.push(img.real, path.resolve(img.seen));
 				i++;
-				const name = `ref-${i}${path.extname(full).toLowerCase()}`;
-				fs.copyFileSync(full, path.join(workDir, name));
+				const name = `ref-${i}${path.extname(img.seen).toLowerCase()}`;
+				fs.copyFileSync(img.real, path.join(workDir, name));
 				refs.push(name);
 			}
 			if (refs.length === 0) stopWrapper('image には参照画像（-Image）を1枚以上渡してください。');

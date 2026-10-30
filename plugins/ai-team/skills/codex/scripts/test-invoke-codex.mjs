@@ -925,6 +925,192 @@ sendCase('止まる: -Base --output=x', () => {
 		const r = headerRun(String.fromCharCode(0xfeff) + 'ガネーシャから\n相談です\n');
 		return [r.called && r.code === 0, sendDetail(r)];
 	});
+	// レビュー1巡目 6：前後の空白を外してから見る
+	sendCase('止まらない: 頭の行の前に空白・タブ・全角空白があっても通る', () => {
+		const a = headerRun('  ガネーシャから\n相談です\n');
+		const b = headerRun('\tメジェドから\n相談です\n');
+		const c = headerRun(String.fromCharCode(0x3000) + 'メジェドから\n相談です\n');
+		return [[a, b, c].every((r) => r.called && r.code === 0), `${sendDetail(a)} ${sendDetail(b)} ${sendDetail(c)}`];
+	});
+	sendCase('止まる: 空白を外しても頭でない（「相談です ガネーシャから」）', () => {
+		const r = headerRun('  相談です ガネーシャから\n');
+		return [stopped(r, headerWord), sendDetail(r)];
+	});
+}
+
+// ---- 1巡目のレビューの確かめ（#106） ----
+// 1. 最低要件。Node の版は、関数を import して確かめる（子プロセスの版は差し込めないため）
+{
+	const { checkNodeVersion } = await import(pathToFileURL(wrapper).href);
+	const nodeStop = (v) => {
+		try {
+			checkNodeVersion(v);
+			return null;
+		} catch (e) {
+			return String(e.message);
+		}
+	};
+	sendCase('止まる: Node.js 22 未満（21.9.0・18.0.0・9.0.0）', () => {
+		const msgs = ['21.9.0', '18.0.0', '9.0.0'].map(nodeStop);
+		return [msgs.every((m) => m !== null && m.includes('Node.js 22 以降が要ります')), msgs.join(' | ')];
+	});
+	sendCase('止まらない: Node.js 22 以上（22.0.0・24.1.0）と、今の node', () => {
+		const msgs = ['22.0.0', '24.1.0', process.versions.node].map(nodeStop);
+		return [msgs.every((m) => m === null), msgs.join(' | ')];
+	});
+}
+
+// 2・4. 守る場所の照らし。HOME・USERPROFILE は、この子プロセスだけを一時ディレクトリに向ける
+{
+	const home = path.join(root, 'home-106b');
+	for (const d of ['.codex', '.ssh', '.aws', 'proj']) fs.mkdirSync(path.join(home, d), { recursive: true });
+	fs.writeFileSync(path.join(home, '.codex', 'auth.json'), 'ガネーシャから\n{}\n');
+	fs.writeFileSync(path.join(home, '.aws', 'credentials'), 'ガネーシャから\n[default]\n');
+	fs.writeFileSync(path.join(home, 'notes.md'), 'メジェドから\n相談です\n');
+	const homeEnv = { HOME: home, USERPROFILE: home, GIT_CEILING_DIRECTORIES: root };
+	const wdRun = (dir, extraEnv = homeEnv) => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		return runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', dir], { extraEnv });
+	};
+
+	// 2. 8.3 の短い名前（Windows）。作れなければ skip
+	if (isWindows) {
+		const long = path.join(home, '.codex');
+		const q = spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${long}") do @echo %~sI"`], { encoding: 'utf8', windowsVerbatimArguments: true });
+		const short = (q.stdout || '').trim();
+		let usable = false;
+		try {
+			usable = short !== '' && short.includes('~') && fs.realpathSync(short).toLowerCase() === short.toLowerCase() && fs.realpathSync.native(short).toLowerCase() === long.toLowerCase();
+		} catch {
+			usable = false;
+		}
+		if (usable) {
+			sendCase('止まる: -WorkingDirectory がホームの .codex の 8.3 の短い名前（CODEX~1。実体で比べる）', () => {
+				const r = wdRun(short);
+				return [stopped(r, 'ホームの'), sendDetail(r)];
+			});
+		} else {
+			console.log('skip 8.3 の短い名前の確かめ（短い名前が無い環境）');
+		}
+	} else {
+		console.log('skip 8.3 の短い名前の確かめ（Windows だけ）');
+	}
+
+	// 2. 守る場所そのものがリンク：リンク先を直接渡してもすり抜けない
+	{
+		const home2 = path.join(root, 'home-106c');
+		const target = path.join(root, 'ssh-target-106');
+		fs.mkdirSync(home2, { recursive: true });
+		fs.mkdirSync(target, { recursive: true });
+		let linked = true;
+		try {
+			fs.symlinkSync(target, path.join(home2, '.ssh'), isWindows ? 'junction' : 'dir');
+		} catch {
+			linked = false;
+		}
+		if (linked) {
+			sendCase('止まる: ホームの .ssh がリンクのとき、リンク先を -WorkingDirectory に直接渡す', () => {
+				const r = wdRun(target, { HOME: home2, USERPROFILE: home2, GIT_CEILING_DIRECTORIES: root });
+				return [stopped(r, 'ホームの'), sendDetail(r)];
+			});
+		} else {
+			console.log('skip 守る場所がリンクのときの確かめ（リンクを作れない環境）');
+		}
+	}
+
+	// 4. CODEX_HOME を別の場所にしているなら、そこも守る
+	{
+		const other = path.join(root, 'codex-home-106');
+		fs.mkdirSync(other, { recursive: true });
+		fs.writeFileSync(path.join(other, 'auth.json'), 'ガネーシャから\n{}\n');
+		const env2 = { ...homeEnv, CODEX_HOME: other };
+		sendCase('止まる: -WorkingDirectory が CODEX_HOME（別の場所）', () => {
+			const r = wdRun(other, env2);
+			return [stopped(r, 'CODEX_HOME'), sendDetail(r)];
+		});
+		sendCase('止まる: -PromptFile が CODEX_HOME（別の場所）の中のファイル', () => {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', path.join(other, 'auth.json')], { extraEnv: env2 });
+			return [stopped(r, sendWord), sendDetail(r)];
+		});
+	}
+
+	// 4. ホームそのもの・祖先・ドライブの根
+	sendCase('止まる: -WorkingDirectory がホームそのもの', () => {
+		const r = wdRun(home);
+		return [stopped(r, 'ホームそのもの'), sendDetail(r)];
+	});
+	sendCase('止まる: -WorkingDirectory がホームの祖先（ホームの1つ上）', () => {
+		const r = wdRun(path.dirname(home));
+		return [stopped(r, 'ホームそのもの'), sendDetail(r)];
+	});
+	sendCase('止まる: -WorkingDirectory がドライブ（ファイルシステム）の根', () => {
+		const r = wdRun(path.parse(home).root);
+		return [stopped(r, 'ホームそのもの'), sendDetail(r)];
+	});
+	sendCase('止まらない: -WorkingDirectory がホームの中の普通のフォルダ（proj）', () => {
+		const r = wdRun(path.join(home, 'proj'));
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
+
+	// 4. -PromptFile・-Image が守る場所の中のファイル
+	for (const rel of ['.codex/auth.json', '.aws/credentials']) {
+		sendCase(`止まる: -PromptFile がホームの ${rel}`, () => {
+			const ctx = makeRepo();
+			commitAll(ctx.git, 'init');
+			const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', path.join(home, ...rel.split('/'))], { extraEnv: homeEnv });
+			return [stopped(r, sendWord), sendDetail(r)];
+		});
+	}
+	sendCase('止まる: -Image がホームの .ssh の中のファイル', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		fs.writeFileSync(path.join(home, '.ssh', 'shot.png'), 'x');
+		const r = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', promptFile, '-Image', path.join(home, '.ssh', 'shot.png')], { extraEnv: homeEnv });
+		return [stopped(r, sendWord), sendDetail(r)];
+	});
+	sendCase('止まらない: -PromptFile がホームの中の守る場所の外のファイル（notes.md）', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', path.join(home, 'notes.md')], { extraEnv: homeEnv });
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
+}
+
+// 3. 照らしたファイルをそのまま送る：/repo/link/../x の .. は、リンクの先の親を指す（Windows の Win32 は .. を字面で畳むので、Mac・Linux だけ）
+if (!isWindows) {
+	const dotdotSetup = (secretParent) => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const parent = path.join(root, `dotdot-${caseNo}`, secretParent ? '.kv' : 'plain');
+		const sub = path.join(parent, 'sub');
+		fs.mkdirSync(sub, { recursive: true });
+		fs.symlinkSync(sub, path.join(ctx.repo, 'lnk'), 'dir');
+		return { ctx, parent };
+	};
+	sendCase('止まる: -PromptFile lnk/../p.md（リンクの先の親が .kv/。見たままの親の根には何も無い）', () => {
+		const { ctx, parent } = dotdotSetup(true);
+		fs.writeFileSync(path.join(parent, 'p.md'), 'ガネーシャから\nS=1\n');
+		const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', 'lnk/../p.md']);
+		return [stopped(r, sendWord), sendDetail(r)];
+	});
+	sendCase('止まる: -Image lnk/../x.png（根に別の x.png がある。送る実体は .kv/ の下）', () => {
+		const { ctx, parent } = dotdotSetup(true);
+		fs.writeFileSync(path.join(parent, 'x.png'), 'secret');
+		ctx.write('x.png', 'plain');
+		const r = runSend(ctx, ['-Mode', 'image', '-WorkingDirectory', ctx.repo, '-PromptFile', promptFile, '-Image', 'lnk/../x.png']);
+		return [stopped(r, sendWord), sendDetail(r)];
+	});
+	sendCase('止まらない: -PromptFile lnk/../p.md（実体が普通の場所なら、その実体を読んで通る）', () => {
+		const { ctx, parent } = dotdotSetup(false);
+		fs.writeFileSync(path.join(parent, 'p.md'), 'メジェドから\n相談です\n');
+		const r = runSend(ctx, ['-Mode', 'consult', '-WorkingDirectory', ctx.repo, '-PromptFile', 'lnk/../p.md']);
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
+} else {
+	console.log('skip lnk/../ の確かめ 3 つ（Windows は .. を字面で畳むので、Mac・Linux だけ）');
 }
 
 // 5. メインのチェックアウトの根（git worktree list）。git の呼び出しを偽物の git に差し替える確かめは、シェルのスクリプトが要るので Mac・Linux だけ
@@ -951,6 +1137,36 @@ if (!isWindows) {
 		const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { extraEnv: withFakeGit(fakeGit('nodir', "printf 'worktree /no/such/dir\\0\\0'")) });
 		return [stopped(r, 'ディレクトリではありません'), sendDetail(r)];
 	});
+	// 1巡目のレビュー 1・5：古い git（-z を知らない）・リポジトリの確かめの失敗の理由
+	const fakeGitMulti = (kind, script) => {
+		const dir = path.join(root, `fake-git-${kind}`);
+		fs.mkdirSync(dir, { recursive: true });
+		const file = path.join(dir, 'git');
+		fs.writeFileSync(file, `#!/bin/sh\ncase "$*" in\n${script}\nesac\nexec "${realGit}" "$@"\n`);
+		fs.chmodSync(file, 0o755);
+		return dir;
+	};
+	sendCase('止まる: 古い git（worktree list の -z を知らない）は「Git 2.36 以降が要ります」', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const dir = fakeGitMulti('old', `*"worktree list"*) echo "error: unknown switch \\\`z'" >&2; exit 129;;`);
+		const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { extraEnv: withFakeGit(dir) });
+		return [stopped(r, 'Git 2.36 以降が要ります'), sendDetail(r)];
+	});
+	sendCase('止まる: worktree list が失敗し、リポジトリかの確かめも「not a git repository」以外で失敗（safe.directory など）', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const dir = fakeGitMulti('dubious', `*"worktree list"*) echo "fatal: detected dubious ownership in repository" >&2; exit 128;;\n*"is-inside-work-tree"*) echo "fatal: detected dubious ownership in repository" >&2; exit 128;;`);
+		const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { extraEnv: withFakeGit(dir) });
+		return [stopped(r, 'リポジトリかを確かめられません'), sendDetail(r)];
+	});
+	sendCase('止まらない: worktree list が失敗し、確かめの文に「not a git repository」があれば、作業の根だけで進む', () => {
+		const ctx = makeRepo();
+		commitAll(ctx.git, 'init');
+		const dir = fakeGitMulti('notrepo', `*"worktree list"*) echo "fatal: not a git repository" >&2; exit 128;;\n*"is-inside-work-tree"*) echo "fatal: not a git repository" >&2; exit 128;;`);
+		const r = runSend(ctx, ['-Mode', 'consult', '-PromptFile', promptFile, '-WorkingDirectory', ctx.repo], { extraEnv: withFakeGit(dir) });
+		return [r.called && r.code === 0, sendDetail(r)];
+	});
 	// 名前に改行・末尾の空白があるメインのチェックアウト：-z で読むので、そこの設定ファイル（.wrangler/ が秘密情報）も読める
 	for (const [label, dirName] of [['改行', 'main\nrepo'], ['末尾の空白', 'main-space ']]) {
 		sendCase(`止まる: メインのチェックアウトの名前に${label}があっても、worktree から呼ぶとメインの設定ファイルを読む`, () => {
@@ -967,7 +1183,7 @@ if (!isWindows) {
 		});
 	}
 } else {
-	console.log('skip git worktree list の確かめ 4 つ（偽物の git はシェルのスクリプトなので、Mac・Linux だけ）');
+	console.log('skip git worktree list の確かめ 4 つと、古い git・リポジトリの確かめの 3 つ（偽物の git はシェルのスクリプトなので、Mac・Linux だけ）');
 }
 
 // 6. PATH の相対の項目（.）は飛ばす：先頭に . があり、今いるフォルダに別の codex があっても、PATH の後ろの絶対パスの codex（テストの偽物）が選ばれる。
@@ -1286,6 +1502,14 @@ containerCase('通る：根より上のリンク（リンク経由の -WorkingDi
 	const r2 = runContainer(ctx, { workDir: path.join(ctx.repo, 'sub') });
 	const copied2 = listCopied(r2.cpDir);
 	return [r1.code === 0 && r2.code === 0 && copied2.includes('c1__work_repo/package.json'), `${detail(r1)} ${detail(r2)}`];
+});
+
+containerCase('止まる（docker を呼ばない）：-WorkingDirectory はホームの中の普通の場所だが、リポジトリの根（置き換えた後）がホームそのもの', () => {
+	const ctx = makeContainerRepo();
+	ctx.write('proj/a.txt', 'a\n');
+	commitAll(ctx.git, 'proj');
+	const r = runContainer(ctx, { workDir: path.join(ctx.repo, 'proj'), extraEnv: { HOME: ctx.repo, USERPROFILE: ctx.repo } });
+	return [r.code !== 0 && r.stderr.includes('ホームそのもの') && r.calls.length === 0, detail(r)];
 });
 
 containerCase('通る：名前の確かめの後（docker info の中）で .dev.vars を足しても、写すものと差分に入らない', () => {

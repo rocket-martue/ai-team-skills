@@ -33,3 +33,20 @@
   - PATH の先頭に相対の項目（`.`）があり、その場所に偽物の codex を置いても、PATH の後ろの偽物の codex（テストの偽物）が選ばれる
 - 今のテストが全部通る（Windows で `node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs`。今の引数の確かめ（「引数:」の3件）も通る）
 - 本物の codex は呼ばない（テストの最初の確かめのとおり）
+
+## PR の前のレビュー（1巡目）で直すこと（まーちゅう OK 2026-10-30）
+
+健さん（P1・P2）・藤さん（必須2・推奨8・表記2）。最低要件はまーちゅうと決めた：Node.js 22 以降・Git 2.36 以降・Claude Code 2.1.295 以降（README の前提は #108 で書く）。
+
+1. 最低要件をラッパーで確かめる：起動の頭で Node.js の版（`process.versions.node` のメジャー）が 22 未満なら止める（「Node.js 22 以降が要ります」）。`git worktree list --porcelain -z` が失敗し、その理由が古い git（`-z` を知らない）なら「Git 2.36 以降が要ります」で止める。`-z` 無しで読み直す仕組みは作らない
+2. 場所の比べ方を固める（`-WorkingDirectory` の守る場所の照らし）：実体は `fs.realpathSync.native` で取る（8.3 の短い名前を展開するため。確かめた：JS 版は `CODEX~1` のまま返す）。守る場所（ホームの `.codex` など）の側も実体を取って比べる（`~/.ssh` がリンクのとき、リンク先を直接渡すとすり抜けるため）。大文字小文字は Windows・Mac でそろえる（`sameCaseFolded`。止める側に倒す比べ方）
+3. `-Image`・`-PromptFile`：照らした実体のファイル（`fs.realpathSync.native` を、`path.resolve` で `..` を畳む前の入力にかけたもの）を、そのまま読む・写す（`/repo/link/../x.png` で、照らすファイルと送るファイルがずれないように）
+4. 守る場所を足す
+   - `CODEX_HOME` を別の場所にしているなら、そこも守る
+   - ホームそのものとその祖先（`~`・`C:\Users`・ドライブの根）を `-WorkingDirectory` に渡されたら止める
+   - `-Image`・`-PromptFile` が守る場所の中のファイル（`~/.codex/auth.json`・`~/.aws/credentials` など）なら止める
+   - `-Container` で根をリポジトリの根に置き換えた後も、同じ照らしをする
+5. 「リポジトリでない」の見分け：`git rev-parse --is-inside-work-tree` の失敗のうち、エラーの文に `not a git repository` があるときだけ作業の根で進める。それ以外（`safe.directory`・git が無い）は止める
+6. 頼みの文の頭：前後の空白を外してから「ガネーシャから」「メジェドから」で始まるかを見る
+
+直さないもの：`getMainRoot` の止まる側のテストは Windows では skip のまま（偽の git を差し込むには exe が要るため）／`-Base` の判定が consult・image でも効く（害なし）
