@@ -688,15 +688,32 @@ try {
 	for (const rule of ['Bash(git remote get-url:*)', 'PowerShell(git remote get-url:*)']) {
 		check(`settings.json の allow に ${rule} がある`, allow.includes(rule));
 	}
-	// 健さんのラッパー：Node 版（#100）と、前の呼び方の中継（.ps1）の両方
+	// 健さんのラッパー（#100）は、決まりの書き方ではリポジトリの中の偽物を外せないので、allow に置かない（プラグインのフック guard-bash.mjs が本物だけ通す。#109）。
+	// git show（リポジトリの中身を読む）と phpcs（phpcs.xml でリポジトリの PHP を動かす）も、allow に置かない
 	for (const rule of [
 		'Bash(node "*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.mjs" *)',
 		'Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.ps1" *)',
+		'Bash(git show:*)',
+		'Bash(vendor/bin/phpcs:*)',
 	]) {
-		check(`settings.json の allow に ${rule} がある`, allow.includes(rule));
+		check(`settings.json の allow に ${rule} が無い`, !allow.includes(rule));
 	}
+	check('settings.json の allow に invoke-codex を含む決まりが無い', !allow.some((r) => r.includes('invoke-codex')));
+	check('settings.json の allow に phpcs を含む決まりが無い', !allow.some((r) => r.includes('phpcs')));
 	for (const rule of ['Read(**/.dev.vars)', 'Read(**/.kv/**)', 'Read(**/wp-config.php)', 'Read(**/.env*)', 'Bash(gh pr merge:*)']) {
 		check(`settings.json の deny に ${rule} がある`, deny.includes(rule));
+	}
+	// git show は、秘密情報の名前を含む形を止める（index 形 `:0:wp-config.php` も名前を含むので当たる）。
+	// --output（書き込み）は、git diff・git log・git show の狭い形だけ止める（`git *--output*` はコミットメッセージにも当たるので使わない）
+	for (const shell of ['Bash', 'PowerShell']) {
+		for (const pattern of ['git show *wp-config.php*', 'git show *.env*', 'git show *.dev.vars*', 'git show *.kv/*', 'git diff *--output*', 'git log *--output*', 'git show *--output*']) {
+			check(`settings.json の deny に ${shell}(${pattern}) がある`, deny.includes(`${shell}(${pattern})`));
+		}
+		check(`settings.json の deny に ${shell}(git *--output*) が無い（広すぎる）`, !deny.includes(`${shell}(git *--output*)`));
+	}
+	// git diff・git log は allow に残す（読むだけの形。--output は上の deny が止める）
+	for (const rule of ['Bash(git diff:*)', 'Bash(git log:*)']) {
+		check(`settings.json の allow に ${rule} がある`, allow.includes(rule));
 	}
 	// deny の Bash のルールすべてに、同じ形の PowerShell のルールがある
 	for (const rule of deny.filter((r) => r.startsWith('Bash('))) {
@@ -730,6 +747,15 @@ try {
 		'hooks.json のガードは onFailure が block（起動できない・タイムアウト・終了コード 2 以外でも編集を止める。#108）',
 		(pluginHooks.PreToolUse || []).some((e) => (e.hooks || []).some((h) => (h.args || [])[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/guard-code-edit.mjs' && h.onFailure === 'block'))
 	);
+	const bashEntry = (pluginHooks.PreToolUse || []).find((entry) =>
+		(entry.hooks || []).some((h) => (h.args || []).some((a) => a.includes('guard-bash.mjs')))
+	);
+	const bashHook = bashEntry && bashEntry.hooks.find((h) => (h.args || []).some((a) => a.includes('guard-bash.mjs')));
+	check(
+		'hooks.json の PreToolUse が Bash に、guard-bash.mjs を command と args の形（${CLAUDE_PLUGIN_ROOT}）で登録している',
+		Boolean(bashHook) && bashEntry.matcher === 'Bash' && bashHook.command === 'node' && bashHook.args[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.mjs'
+	);
+	check('hooks.json の guard-bash.mjs は onFailure を付けない（失敗したら判定なしで今の決まりに戻る）', Boolean(bashHook) && bashHook.onFailure === undefined);
 	check(
 		'hooks.json に登録されているのは PreToolUse と SessionStart だけ',
 		Object.keys(pluginHooks).sort().join(',') === 'PreToolUse,SessionStart'

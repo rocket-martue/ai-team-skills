@@ -101,9 +101,11 @@ claude --version
    Copy-Item "$src\docs\team\Ganesha.md", "$src\docs\team\common-rules.md" docs\team\
    ```
 
-2. 案件に合わせる（WordPress で `vendor/bin/phpcs` を使うなら、そのままで始められる。後で直してもよい）：`docs/team/common-rules.md` のチェックコマンド、`.claude/settings.json` の allow（チェックコマンドの分）、`.claude/ai-team.json` の `secretPatterns`（足したら settings.json の `Read(...)` の deny もそろえる）
+2. 案件に合わせる（後で直してもよい）：`docs/team/common-rules.md` のチェックコマンド、`.claude/settings.json` の allow（チェックコマンドの分）、`.claude/ai-team.json` の `secretPatterns`（足したら settings.json の `Read(...)` の deny もそろえる）
 
-   - phpcs がリポジトリの `vendor/` に無い（composer のグローバルに入れているなど）か、`phpcs.xml` が根に無い（自作プラグインの中だけにあるなど）ときは、テンプレートのままだと当たらない。common-rules.md のチェックコマンドを実際の打ち方（例：`phpcs --standard=<phpcs.xml のパス> <見るフォルダ>`）に、allow をそれに合う形（例：`Bash(phpcs:*)`）に書き換える
+   - **phpcs の allow は、テンプレートに無い。** phpcs は、追跡している `phpcs.xml` の `<autoload>`・`<rule ref="./…">` で、リポジトリの中の PHP を読み込んで動かす（`vendor/` を追跡している案件では、実行ファイルそのものも PR の中身）。信用できない PR の中身を動かす道になるので、PR の中身を信じられる案件だけ、`Bash(vendor/bin/phpcs:*)` を足す
+   - 足さなくても動く。Manual ではメジェドのチェックのたびに確認が出る（auto では判定器に回るだけで、止まらない）
+   - phpcs がリポジトリの `vendor/` に無い（composer のグローバルに入れているなど）か、`phpcs.xml` が根に無い（自作プラグインの中だけにあるなど）ときは、common-rules.md のチェックコマンドを実際の打ち方（例：`phpcs --standard=<phpcs.xml のパス> <見るフォルダ>`）に書き換える。allow を足すなら、それに合う形（例：`Bash(phpcs:*)`）にする
    - サーバーのフォルダをまるごと持ってきた案件では、`.ftpaccess` やログのフォルダ（`log/` など）も `secretPatterns` に足す候補。中身を見て決める
 
 3. プラグインを入れる。リポジトリの根で打つ
@@ -133,7 +135,7 @@ claude --version
 VS Code の新しいセッションを Manual モードで開いて、ガネーシャに1つずつ頼む。
 
 1. 「チーム共通の決まりの場所は？」と聞く。`<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/docs/team-rules.md` のような答えが返れば、プラグインが入っている。`<版>` はコミットの先頭12文字のフォルダ名で、次の 2 で使う
-2. allow が効くかを確かめる。次の2つを、それぞれ単独で頼む（`<版>` は 1 の答えのもの）。どちらも確認のダイアログが出なければ効いている
+2. settings.json の allow と、健さんのラッパーを通すフックが効くかを確かめる。次の2つを、それぞれ単独で頼む（`<版>` は 1 の答えのもの）。どちらも確認のダイアログが出なければ効いている
 
    ```
    Bash ツールで git fetch origin だけを単独で打って
@@ -144,7 +146,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
    node "<ホーム>/.claude/plugins/cache/ai-team-skills/ai-team/<版>/skills/codex/scripts/invoke-codex.mjs" -Mode check
    ```
 
-   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。Codex CLI が入っていなくても打てる（`-Container` を付けないとき）。ダイアログを見逃しても、セッションの記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` なら allow に当たっている
+   2つ目は健さんを呼ばず、`CHECK: ok（…）` を返すだけ（Codex の枠を使わない）。Codex CLI が入っていなくても打てる（`-Container` を付けないとき）。1つ目は settings.json の allow が効いている印で、記録（`<ホーム>/.claude/projects/<プロジェクト>/<セッション>.jsonl`）の、そのツールの結果の `permissionDecision` が `"source":"config"` になる。2つ目は、settings.json の allow ではなく、プラグインのフック（`guard-bash.mjs`）が本物のラッパーだけ通す。記録の `permissionDecision` は `"source":"hook","reasonType":"hook"` になる（Claude Code 2.1.312 で確かめた）
 
 確かめが済んだら、下の「使い方」のとおりにガネーシャに頼めば使える。
 
@@ -152,7 +154,8 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 
 - **1 で答えが返らない（プラグインが入っていない）。** 「使うリポジトリごと」の 3 を、そのリポジトリの根で `--scope project` を付けて打ったかと、5 で開き直したかを見る
 - **2 で確認のダイアログが出る。** 「使うリポジトリごと」の 4 の信頼を、`C:` と `c:` の両方でしたかを見る
-- **allow の確かめは Bash ツールで、パスまで書いて頼む。** この2つの allow は Bash の形にしか無いので、PowerShell ツールで打つと当たらずに確認が出る。パスを書かずに「`-Mode check` を打って」とだけ頼むと、ガネーシャが `-Mode check` だけを打とうとする
+- **確かめは Bash ツールで、パスまで書いて頼む。** この2つは Bash の形にしか効かない（`git fetch origin` は allow、ラッパーはフック）ので、PowerShell ツールで打つと当たらずに確認が出る。パスを書かずに「`-Mode check` を打って」とだけ頼むと、ガネーシャが `-Mode check` だけを打とうとする
+- **2 の2つ目で確認が出る。** プラグインが古い版のままかもしれない（フックはプラグインの新しい版から。「導入済みのリポジトリへの反映」を見る）。フックが通すのは、プラグインのキャッシュかマーケットプレイスの写しにある本物のラッパーだけで、`node` とパスの間に何か入る形や、`;`・`&&`・`$(…)` などがつく形は通らない
 - **確認が出ても「常に許可」は選ばない。** `.claude/settings.local.json` に決まりが書かれ、settings.json の allow が効いていないことが隠れる。出たら、「使うリポジトリごと」の 4 の信頼を見直す
 - **写す元は、マーケットプレイスの中か、このリポジトリの作業ツリー。** どちらも `.gitattributes` で LF にそろえてある。GitHub の画面からコピーして貼るより、ファイルごと写す
 
@@ -174,7 +177,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
   ```
 
 - 「使うリポジトリごと」の 4：信頼は1回でよい（`cd <リポジトリのパス> && claude`）。ドライブ名の大文字・小文字の話は Windows だけ
-- 「入ったかを確かめる」の 2：健さんの行は、`<ホーム>` を `/Users/<ユーザー名>` にした同じ形（`node "/Users/<ユーザー名>/.claude/plugins/cache/..." -Mode check`）。`~` や `$HOME` は書かない（そのままの文字列で allow と比べるため）
+- 「入ったかを確かめる」の 2：健さんの行は、`<ホーム>` を `/Users/<ユーザー名>` にした同じ形（`node "/Users/<ユーザー名>/.claude/plugins/cache/..." -Mode check`）。`~` や `$HOME` は書かない（フックは、展開される前の文字列でパスを照らすので、`~`・`$` を含む形は通さない）
 
 ### 導入済みのリポジトリへの反映
 
@@ -182,11 +185,10 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 - すぐ入れたいときだけ手で打つ：PC ごとに `claude plugin marketplace update ai-team-skills`、リポジトリごとに根で `claude plugin update ai-team@ai-team-skills --scope project`、そのあと VS Code を開き直す。入った版は `<ホーム>/.claude/plugins/installed_plugins.json` の ai-team の記録のうち、scope が project で projectPath がそのリポジトリのものの `gitCommitSha`
 - **リポジトリ側（`repo-files/` の中身）は手で反映する。** `docs/team/Ganesha.md`・`common-rules.md` を今の版に差し替えて、固有の分（チェックコマンドなど）を戻す。写す元は、マーケットプレイスの中の `repo-files\`（新しい版が届いた後に。急ぐなら `claude plugin marketplace update ai-team-skills` を打ってから）か、このリポジトリの作業ツリー。`.claude/ai-team.json` に古い `plannerWritable` が残っていても動く（読み捨てる）
 - プラグインだけ先に届いて、リポジトリ側の文書が古いままの間は、ガネーシャはチーム共通の決まり（team-rules.md）に従い、まーちゅうに差し替えを伝える（team-rules.md の「作業の進め方」に書いてある）
-- **健さんのラッパーを Node.js にした版（#100）からは、`.claude/settings.json` の allow に次の1行が要る。** プラグインからは allow を足せないので、各リポジトリで、今ある `invoke-codex.ps1` の行のすぐ下に足す。足さないと、ガネーシャ・メジェドが健さんを呼ぶたびに確認のダイアログが出る（auto モードでは止まる）。Windows で前の呼び方（`powershell.exe ... invoke-codex.ps1`）を使うものは、中継が残っているので今までどおり動く
-
-  ```
-  "Bash(node \"*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.mjs\" *)",
-  ```
+- **allow を絞った版（#109）からは、健さんのラッパーはプラグインのフックで通す。** 決まりの書き方では、リポジトリの中に置いた偽物のラッパーを外せないため。**先にプラグインを新しい版にする**（上の手順）。そのあとで、各リポジトリの `.claude/settings.json` を次のように直す。逆の順だと、古い版の間は健さんの呼び出しが確認に回り、バックグラウンドの gh-pr などが止まる
+  - allow から次の4行を消す：`Bash(git show:*)`・`Bash(vendor/bin/phpcs:*)`・`Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.ps1" *)`・`Bash(node "*/ai-team-skills/ai-team/*/skills/codex/scripts/invoke-codex.mjs" *)`（phpcs は、PR の中身を信じられる案件だけ残してよい）
+  - deny に、`repo-files/claude/settings.json` の次の行を写す（`Bash(...)` と `PowerShell(...)` の両方）：`git show` の秘密情報の名前（`*wp-config.php*`・`*.env*`・`*.dev.vars*`・`*.kv/*`）と、`--output`（`git diff *--output*`・`git log *--output*`・`git show *--output*`）
+  - gh-pr が呼ぶ形（マーケットプレイスの写しの `invoke-codex.ps1`）は、今のテンプレートの allow にも当たっておらず、フックで初めて確認なしになる
 
 ## 使い方
 
@@ -272,6 +274,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 | `agents/mejed.md`・`agents/adversary.md` | メジェドと藤さんの定義 |
 | `skills/codex/` | 健さんの呼び方と、ラッパー `scripts/invoke-codex.mjs`（Node.js。この PC では read-only・秘密情報の照らし合わせ・返事は標準出力に出すだけ。`-Container` のときはコンテナの中で動かす）。`scripts/invoke-codex.ps1` は、前の呼び方を残すための中継。`container/Dockerfile` は `-Container` のイメージ |
 | `hooks/guard-code-edit.mjs` | 編集のガード。秘密情報のファイルと、リポジトリの外（メモリ・計画ファイル・scratchpad を除く）の編集だけを止める。誰が編集するかは見ない |
+| `hooks/guard-bash.mjs` | Bash のフック。健さんのラッパー（`invoke-codex.mjs`・`invoke-codex.ps1`）の本物の呼び出しだけ、確認なしで通す（allow を返すか、何も返さないかだけ。ask・deny は返さない）。本物とは、プラグインのキャッシュ（フック自身の根）かマーケットプレイスの写しの `skills/codex/scripts/` にあるもので、リンクをたどった実体で比べる。前に `cd <パス> && ` が付いてもよい。`node` とパスの間に何か入る形・引数に `;`・`&&`・`$(…)` などがつく形・偽物は、何も返さずに今の決まりに任せる |
 | `hooks/session-start.mjs` | team-rules.md をセッションの始めに入れる |
 | `hooks/ai-team-config.mjs` | ガードとラッパーが使う判定の部品（秘密情報の既定の一覧・`.claude/ai-team.json` の読み込み） |
 | `hooks/test-*.mjs`・`skills/codex/scripts/test-invoke-codex.mjs` | 確かめのスクリプト（依存なし） |
@@ -282,12 +285,17 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 | --- | --- |
 | `docs/team/Ganesha.md`・`docs/team/common-rules.md` | リポジトリの `docs/team/`。common-rules.md はリポジトリ固有の決まり（コーディング・チェックコマンド） |
 | `CLAUDE.md.snippet` | 中身を `CLAUDE.md` の先頭に足す |
-| `claude/settings.json` | `.claude/settings.json`。読むだけの git・gh と健さんのラッパーの allow、秘密情報の Read と `git checkout`・`merge`・`rebase`・`reset`・`gh pr merge` の deny（Bash と PowerShell の両方） |
+| `claude/settings.json` | `.claude/settings.json`。読むだけの git・gh の allow（健さんのラッパーと phpcs は置かない）、秘密情報の Read と `git show` の秘密情報の名前、`--output`（`git diff`・`git log`・`git show`）、`git checkout`・`merge`・`rebase`・`reset`・`gh pr merge` の deny（Bash と PowerShell の両方） |
 | `claude/ai-team.json` | `.claude/ai-team.json`。秘密情報のパターンの追加（`secretPatterns`。グロブ。既定の4つ `.env*`・`.dev.vars`・`.kv/`・`wp-config.php` は外せない）と、呼び名の対応（`names`。上の「呼び名を変える」）。ガードとラッパーと SessionStart のフックが読む。ガードが設定を読む根は、プロジェクトの根・そのメインのチェックアウトの根・編集先が入っている git の根（`.claude/worktrees/<名前>/` の中など。そのメインの根も）・フックの cwd の git の根（メインの根が同じときだけ）で、根ごとに `.claude/ai-team.json`、無ければ `repo-files/claude/ai-team.json`（テンプレートのリポジトリ）を読む。`secretPatterns` は全部を合わせ、プロジェクトの根からの相対パスと、そのパターンを書いた設定の根からの相対パス（入れ子のリポジトリ用）の両方に当てる。`.git`（プロジェクトや編集先から上へたどって見つかる祖先のフォルダのものも含む）を読めないときも止める。壊れていると、ガードは設定ファイルのほかの編集を全部止め、ラッパーは健さんを呼ばない。知らないキーは読み捨てる。ただし、知っているキーの打ち間違いに見えるキー（記号を除いて小文字にそろえたら同じ、か、2文字以内の違い。例：`secretPattern`・`secret_patterns`・`Names`）は、秘密情報の守りが黙って消えないよう、壊れている扱い |
 | `codex/AGENTS.md` | 各 PC の `<CODEX_HOME>/AGENTS.md`（既定は `~/.codex/AGENTS.md`）。健さんのキャラと請け負う範囲 |
 | `gitignore.snippet` | `.gitignore` に足す行 |
 
-ガードが見るのは Edit / Write などの編集ツールだけで、Bash・PowerShell 経由の書き込み・読み取りは止まらない（柵であって壁ではない。team-rules.md で「回り込まない」と縛っている）。
+ガードが見るのは Edit / Write などの編集ツールだけで、Bash・PowerShell 経由の書き込み・読み取りは止まらない（柵であって壁ではない。team-rules.md で「回り込まない」と縛っている）。秘密情報の読み取りの止まり方には、次の限界がある。
+
+- settings.json の `Read(...)` の deny は、Claude Code が見分けるファイルのコマンド（`cat`・`head`・`tail`・`sed`・`tee`）とリダイレクトの先にも効く。効かないのは、ファイル名を書かない読み方（`grep -r`）・スクリプト（node・python）・`git diff`・`git log -p`
+- `git show` は、秘密情報の名前（`wp-config.php`・`.env*`・`.dev.vars`・`.kv/`）を含む形だけ deny で止める。名前を引用で割る形（`'wp-con'fig.php`）や、ハッシュで指す形（`git show <ハッシュ>`）はすり抜ける。前置きがつく形（`git -C . show …`・`git --no-pager show …`）も決まりに当たらないが、組み込みの許可にも当たらないので、Manual では確認、auto では判定器に回る（Claude Code 2.1.312 で確かめた）。名前は部分一致なので、`.env` を名前に含むほかのファイル（`app.environment.json` など）や、秘密情報を除く指定（`':(exclude)**/.env*'`）を書いた `git show` も止まる
+- `--output`（`git diff`・`git log`・`git show` がファイルへ書く）は、`--output` を含む形だけ deny で止める。引用で割る形（`--out'put'`）や、前置きがつく形（`git --no-pager diff --output`）は、決まりに当たらない。前置きつきは今は確認に回る（default で reject）が、決まりで止めているわけではない
+- 健さんのラッパーの偽物（リポジトリの中に置いた同じ名前のスクリプト）は、フックの allow に当たらないので、Manual では確認が出る。auto では判定器に回り、判定器が通せば動く（Claude Code 2.1.312 で、判定器が通した例を確かめた）。決まりで止めているわけではない
 
 ## 外し方
 
@@ -302,6 +310,7 @@ VS Code の新しいセッションを Manual モードで開いて、ガネー�
 | 触ったもの | 打つもの |
 | --- | --- |
 | `repo-files/claude/settings.json`・`plugins/ai-team/hooks/guard-code-edit.mjs`・`hooks/ai-team-config.mjs`・`hooks/hooks.json` | `node plugins/ai-team/hooks/test-guard-code-edit.mjs` |
+| `plugins/ai-team/hooks/guard-bash.mjs`・`hooks/hooks.json` | `node plugins/ai-team/hooks/test-guard-bash.mjs` |
 | `plugins/ai-team/hooks/session-start.mjs`・`plugins/ai-team/docs/team-rules.md`（1万文字の上限） | `node plugins/ai-team/hooks/test-session-start.mjs` |
 | `plugins/ai-team/skills/codex/scripts/`・`hooks/ai-team-config.mjs` | `node plugins/ai-team/skills/codex/scripts/test-invoke-codex.mjs` |
 | `.claude-plugin/`・`plugins/ai-team/.claude-plugin/`・スキルやエージェントの追加・名前の変更 | `claude plugin validate .` と `claude plugin validate plugins/ai-team` |
