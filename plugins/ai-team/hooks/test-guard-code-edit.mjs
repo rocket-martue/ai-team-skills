@@ -605,7 +605,8 @@ try {
 			}
 			check(`globToRegExp が投げない: ${g}`, ok);
 		}
-		// 設定ファイルの secretPatterns（globToRegExp を通る）が、u フラグ付きでも今までどおり当たる・当たらない
+		// secretPatterns に書くグロブを globToRegExp に直接通し、u フラグ付きでも今までどおり当たる・当たらないを見る
+		// （設定ファイルを経由した当たりは、上の withConfig の確かめがガードの通しで見ている）
 		const cases = [
 			['**/secret.txt', ['secret.txt', 'a/secret.txt', 'a/b/secret.txt'], ['asecret.txt', 'secret.txt.bak']],
 			['private/**', ['private', 'private/a', 'private/a/b.json'], ['privatex/a', 'x/private/a']],
