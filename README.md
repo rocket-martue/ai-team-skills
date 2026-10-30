@@ -18,7 +18,7 @@ Claude Code のメイン（ガネーシャ）が、メジェド・健さん・�
 | もの | 版 | 理由 |
 | --- | --- | --- |
 | Node.js | 22 以降 | フックとラッパーを動かす（20 は 2026年4月にサポートが終わった） |
-| Git | 2.36 以降 | ラッパーが `git worktree list -z` を使う |
+| Git | 2.36 以降 | ラッパーが `git worktree list --porcelain -z` で worktree を読む（#106 から） |
 | Claude Code | 2.1.295 以降 | 編集のガードの `onFailure: "block"` が効く |
 
 - 日本語で進める WordPress（PHP、phpcs）の案件向け。ほかの技術スタックでは、リポジトリの `docs/team/common-rules.md` と `.claude/settings.json` の allow を書き換える
