@@ -987,7 +987,8 @@ containerCase('通る：変更していない秘密情報（wp-config.php・.env
 	const ok = r.code === 0
 		&& copied.includes('c1__work_repo/package.json')
 		&& !copied.some((p) => p.endsWith('/wp-config.php') || p.endsWith('/.env.example') || p.includes('/private/'))
-		&& !/wp-config|\.env\.example|private\//.test(promptText);
+		// 頼みの文には決まりとして wp-config.php の名前が入るので、このリポジトリだけにある名前で見る
+		&& promptText.includes('ガネーシャから') && !/\.env\.example|private\/token\.json/.test(promptText);
 	return [ok, `${detail(r)} copied=${copied.join(',').slice(0, 300)}`];
 });
 
@@ -1127,6 +1128,8 @@ containerCase('通る：config.toml の model は sh -c の文字列に入らず
 for (const [name, extraEnv, word, wantCreate] of [
 	['docker info が失敗する', { FAKE_DOCKER_INFO_FAIL: '1' }, 'docker info', false],
 	['向き先がこの PC でない', { FAKE_DOCKER_ENDPOINT: 'ssh://user@remote' }, '向き先', false],
+	['向き先が別の PC の名前付きパイプ（npipe:////host/pipe/…）', { FAKE_DOCKER_ENDPOINT: 'npipe:////build-host/pipe/docker_engine' }, '向き先', false],
+	['DOCKER_HOST が別の PC の名前付きパイプ', { DOCKER_HOST: 'npipe:////build-host/pipe/docker_engine' }, 'DOCKER_HOST', false],
 	['コンテナ用のログインが無い', { FAKE_DOCKER_NO_LOGIN: '1' }, 'ログイン', false],
 	['準備のコマンドが失敗する', { FAKE_DOCKER_SETUP_FAIL: '1' }, 'container.setup', true],
 	['準備が /work/repo をリンクにすり替えた（97）', { FAKE_DOCKER_START_CODE: '97' }, 'すり替え', true],

@@ -335,7 +335,8 @@ function checkCodexForContainer(codex) {
 // 7〜9. docker の向き先・イメージ・ログインを確かめる。返り値はイメージの名前
 function prepareDocker(docker, version, workDir) {
 	if ((process.env.DOCKER_CONTEXT || '') !== '') stopWrapper('DOCKER_CONTEXT があるときは -Container を使いません（向き先の決まり方が分かれるため）。消してから呼んでください。');
-	const local = (h) => /^(unix|npipe):\/\//.test(h);
+	// この PC を指す形だけ。unix:// はソケットのファイル。npipe はホストが「.」のときだけ（npipe:////<別の PC>/pipe/… は別の PC を指すため）
+	const local = (h) => /^unix:\/\//.test(h) || /^npipe:(\/\/|\\\\)[\\/]{2}\.[\\/]pipe[\\/]/i.test(h);
 	const host = process.env.DOCKER_HOST || '';
 	if (host !== '') {
 		if (!local(host)) stopWrapper(`DOCKER_HOST（${host}）がこの PC を指していません。作業ツリーとログインを別のマシンに送らないよう、-Container を使いません。`);
@@ -470,7 +471,8 @@ function buildContainerPrompt(container, untracked) {
 		'次の変更をレビューしてください。',
 		'',
 		'- 見る差分：/review/review.diff',
-		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください。テストが無いファイルを読もうとして落ちたときは、変更の不具合ではないので、指摘にせず、そう書き添えてください）',
+		'- 作業ツリー：/work/repo（git のリポジトリではありません。秘密情報のファイルは写していないので、無いファイルがあっても探さないでください）',
+		'- 写していないのは、秘密情報の決まりに当たるファイル（`.env*`・`.dev.vars`・`.kv/` の下・`wp-config.php` と、`.claude/ai-team.json` の `secretPatterns` に当たるもの）だけです。テストがそれらを読もうとして落ちたときに限り、変更の不具合ではないので、指摘にせず、そう書き添えてください。ほかのファイルが無くて落ちたときは、ふつうに指摘してください',
 		`- テスト：作業ツリーで \`${container.test}\` を打ち、その結果も根拠にしてください（準備のコマンド \`${container.setup}\` は打ってあります）`,
 		'- 作業ツリーのファイルを書き換えないでください（テストが作るキャッシュや一時ファイルは除く）',
 		'- 指摘は、/work/repo からの相対パスのファイル:行と、重要度（必須／推奨／表記）を付けて書いてください',
