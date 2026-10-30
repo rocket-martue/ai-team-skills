@@ -228,6 +228,17 @@ function expectPass(name, setup, { base = '', mode = 'review' } = {}) {
 
 const envBody = Array.from({ length: 20 }, (_, i) => `KEY_${i}=value${i}`).join('\n') + '\n';
 
+// 名前に `\` を含む未追跡の秘密情報（Linux・Mac では `.env\local` は1つの名前で、.env* に当たる。#107）。Windows は名前に `\` を使えないので飛ばす
+if (isWindows) {
+	console.log('SKIP: 名前に \\ を含む未追跡の .env\\local（Windows は名前に \\ を使えない）');
+} else {
+	const bsName = '.env' + String.fromCharCode(92) + 'local';
+	expectStop('名前に \\ を含む未追跡の秘密情報（.env\\local）', ({ git, write }) => {
+		commitAll(git, 'init');
+		write(bsName, 'S=1\n');
+	});
+}
+
 // ---- 止まる 9つ ----
 expectStop('未追跡の .dev.vars', ({ git, write }) => {
 	commitAll(git, 'init');

@@ -605,11 +605,30 @@ try {
 			}
 			check(`globToRegExp が投げない: ${g}`, ok);
 		}
-		// 既定のパターン（u なし）と同じに通る
-		for (const p of ['.env', '.env.local', 'a/.env', 'wp-config.php', 'x/wp-config.php', '.dev.vars', '.kv/x']) {
-			check(`既定の一覧に当たる: ${p}`, isSecretPath(p));
+		// 設定ファイルの secretPatterns（globToRegExp を通る）が、u フラグ付きでも今までどおり当たる・当たらない
+		const cases = [
+			['**/secret.txt', ['secret.txt', 'a/secret.txt', 'a/b/secret.txt'], ['asecret.txt', 'secret.txt.bak']],
+			['private/**', ['private', 'private/a', 'private/a/b.json'], ['privatex/a', 'x/private/a']],
+			['a/**/b.txt', ['a/b.txt', 'a/x/b.txt', 'a/x/y/b.txt'], ['ab.txt', 'a/xb.txt']],
+			['*.key', ['a.key', '.key'], ['a/b.key', 'a.keys']],
+			['a.b+c(d)^$|/?', ['a.b+c(d)^$|/x'], ['aXb+c(d)^$|/x', 'a.b+c(d)^$|/xy', 'a.b+c(d)^$|//']],
+			['a-b/c.txt', ['a-b/c.txt'], ['a-b/cxtxt']],
+		];
+		for (const [g, hits, misses] of cases) {
+			const r = globToRegExp(g);
+			for (const p of hits) {
+				check(`secretPatterns（u 付き）${g} に当たる: ${p}`, r.test(p));
+			}
+			for (const p of misses) {
+				check(`secretPatterns（u 付き）${g} に当たらない: ${p}`, !r.test(p));
+			}
 		}
-		check('既定の一覧に当たらない: env.txt', !isSecretPath('env.txt'));
+		// 足したグロブを isSecretPath の第2引数に渡す経路でも、既定の一覧と合わせて判定できる
+		const extra = [globToRegExp('private/**'), globToRegExp('**/*.key')];
+		check('足したグロブ経由: private/a.json に当たる', isSecretPath('private/a.json', extra));
+		check('足したグロブ経由: x/y/a.key に当たる', isSecretPath('x/y/a.key', extra));
+		check('足したグロブ経由: 既定の .env も今までどおり当たる', isSecretPath('.env', extra));
+		check('足したグロブ経由: 関係ない src/a.js には当たらない', !isSecretPath('src/a.js', extra));
 		// NFC と NFD は区別して当てる（OS に依らない事実の記録。#107）
 		const nfc = '秘密/ぱ'.normalize('NFC');
 		const nfd = '秘密/ぱ'.normalize('NFD');

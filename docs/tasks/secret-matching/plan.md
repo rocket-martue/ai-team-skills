@@ -38,7 +38,14 @@
 ## 完了条件
 
 - `test-guard-code-edit.mjs` と `test-invoke-codex.mjs` に、Windows・Linux で通る確かめがある
-  - `\`：Linux の扱い（`.env\local` が `.env*` に当たる）と、Windows の扱い（`.env\local` が `.env/local` として当たる）を、OS の引数で両方確かめる。ラッパーの `relOrAbs` も同じ
-  - `?`：`private/?.json` が `private/🔑.json` に当たり、`private/ab.json` に当たらない
+  - `\`：Linux の扱い（`.env\local` が `.env*` に当たる）と、Windows の扱い（`.env\local` は `.env/local` になって `.env*` には当たらない。`.kv\x` は `.kv/x` として当たる）を、OS の引数で両方確かめる。ラッパーの `relOrAbs` も同じ
+  - `?`：`private/?.json` が `private/🔑.json` に当たり、`private/ab.json` に当たらない。`?` は1コードポイントに当たるので、Mac の NFD で濁点つきの文字（2コードポイント）になった名前には当たらない（正規化は未確認の範囲）
   - `u` フラグを付けても、既定のパターン（`.env*`・`wp-config.php` など）と今のテストが同じに通る
 - 正規化は、Mac で確かめた結果と、そろえるかどうかの判断が、イシュー #107 に残っている（Mac が無い間は、確かめ方と「未確認」）
+
+## PR のレビュー（藤さん・1巡目）で直すこと（まーちゅう OK 2026-10-30）
+
+1. 完了条件の `\` の項の「Windows の扱い（`.env\local` が `.env/local` として当たる）」は事実と違う。`.env/local` は `.env` フォルダの中になり、`.env*`（`/(^|\/)\.env[^/]*$/`）には当たらない（`test-guard-code-edit.mjs` の確かめのほうが正しい）。正しくは「Windows の扱い（`.env\local` は `.env/local` になって `.env*` には当たらない。`.kv\x` は `.kv/x` として当たる）」
+2. `test-guard-code-edit.mjs` の「既定のパターン（u なし）と同じに通る」ブロックは、`SECRET_PATTERNS`（`globToRegExp` を通らない）だけを照らしていて、`u` フラグの影響を確かめていない。設定ファイルの `secretPatterns`（`globToRegExp` を通る。`**/`・`/**`・記号のエスケープを含むグロブ）経由で、`u` 付きでも今までどおり当たる・当たらないを確かめる形に直す（名前も中身に合わせる）
+3. Linux の本番の道の確かめ：`test-invoke-codex.mjs` に、名前に `\` を含む未追跡の秘密情報のファイル（例 `.env\local`）がある review が「秘密情報」で止まり、偽物の codex を呼ばないことの通しの確かめを足す（Linux・Mac だけ。Windows は名前に `\` を使えないので skip）。直す前のコード（`git show HEAD:` の写し）では止まらないことを確かめる
+4. `?` は1コードポイントに当たるので、Mac の NFD で濁点つきの文字（2コードポイント）になった名前には当たらない（正規化は未確認の範囲）
