@@ -69,6 +69,10 @@ $env:Path += ";" + (Split-Path (Get-ChildItem "$HOME\.vscode\extensions\anthropi
 claude --version
 ```
 
+---
+
+ここからは手で入れる場合の手順。Claude Code に頼んだときも、中ではこのとおり進む。
+
 ### PC ごとに1回
 
 1. マーケットプレイスを登録する
@@ -94,7 +98,7 @@ claude --version
    | `CLAUDE.md.snippet` の中身 | `CLAUDE.md` の先頭に、コメントの行も含めてそのまま足す（無ければ作る）。中身はコメント1行と、`@docs/team/Ganesha.md` の取り込み1行 |
    | `gitignore.snippet` の中身 | `.gitignore` に足す（`.claude/worktrees/` の1行） |
 
-   上の4つのファイルがまだ無いリポジトリなら、次で写せる（`Copy-Item` は同じ名前のファイルを上書きするので、先に2行目で全部 `False` なのを見る。`True` のファイルがあれば、表のとおり手で合わせる）。`CLAUDE.md` と `.gitignore` は VS Code で開いて足す
+   `.claude\` と `docs\team\` に写す4つのファイルがまだ無いリポジトリなら、次で写せる（`Copy-Item` は同じ名前のファイルを上書きするので、先に2行目で全部 `False` なのを見る。`True` のファイルがあれば、表のとおり手で合わせる）。`CLAUDE.md` と `.gitignore` は VS Code で開いて足す
 
    ```
    cd <リポジトリのパス>
