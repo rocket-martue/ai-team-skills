@@ -1,5 +1,9 @@
 # AIチーム開発 スキル一式
 
+<p align="center">
+  <img src="docs/images/ai-team-social-preview.png" alt="ガネーシャとメジェド" width="640">
+</p>
+
 Claude Code のメイン（ガネーシャ）が、メジェド・健さん・藤さん・純ちゃんを呼べるようにするプラグイン `ai-team` と、各リポジトリに置く設定。作業の流れ（手順・回数・分かれ目）は決めない。誰をいつ呼ぶかは、ガネーシャがチーム共通の決まり（`plugins/ai-team/docs/team-rules.md`）の目安でその都度選び、迷ったらまーちゅうに聞く。
 
 | 名前 | 役 | 呼び方 |
