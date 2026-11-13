@@ -7,7 +7,7 @@
 // 判定は「指定されたパス」と「シンボリックリンクをたどった実体のパス」の両方に当て、どちらかで止まれば止める。
 // 止めるときは exit 2 と stderr の理由を返す（Claude に理由が伝わる）。
 
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { CONFIG_CANDIDATES, forMatch, forPath, gitRoots, isSecretPath, readConfig, realPath, SECRET_PATTERNS } from './ai-team-config.mjs';
@@ -18,15 +18,36 @@ const WORKTREE_PREFIX = /^\.claude\/worktrees\/[^/]+\/(.+)$/;
 // リポジトリの外でも編集してよい場所。Claude Code 自身が使う置き場所だけにする。
 // `base` の中で、`base` からの相対パスが `pattern` に当たるものだけ通す。
 // ~/.claude/ を丸ごと通すと、ユーザー共通の settings.json・CLAUDE.md・スキル・認証情報まで書き換えられるので、
-// ~/.claude/ の中はメモリと計画ファイルの2か所だけにする。通すのは、それに一時ディレクトリの scratchpad を足した次の3か所。
+// ~/.claude/ の中はメモリと計画ファイルの2か所だけにする。通すのは、それに一時ディレクトリの scratchpad を足した次の4か所。
 // - ~/.claude/projects/<プロジェクト>/memory/ … メモリ
 // - ~/.claude/plans/                          … プランモードの計画ファイル
 // - <一時ディレクトリ>/claude/                … セッションごとの scratchpad
+// - <一時ディレクトリ>/claude-<uid>/          … 同じ scratchpad（uid がある環境のみ。下の scratchpadUidDir）。uid がある環境（Mac・Linux）の Claude Code は、この名前を使う（Linux で確かめた。Mac の実機は未確認）。Windows は uid が無いので足さない
 const CLAUDE_HOME = path.join(homedir(), '.claude');
+
+// uid がある環境の scratchpad（<一時ディレクトリ>/claude-<uid>/）の場所を返す。uid が無い（Windows）・足さないときは null。
+// /tmp は共有なので、ほかのユーザーが先に作ったフォルダ・リンク（リンク先が丸ごと通ってしまう）・持ち主が自分でないフォルダは足さない。
+// まだ無いとき（ENOENT）は足す（Claude Code がこれから作る場所）。lstat はリンクをたどらないので、リンクは isDirectory() が false になる。
+function scratchpadUidDir() {
+	if (typeof process.getuid !== 'function') {
+		return null;
+	}
+	const uid = process.getuid();
+	const dir = path.join(tmpdir(), `claude-${uid}`);
+	try {
+		const st = lstatSync(dir);
+		return st.isDirectory() && st.uid === uid ? dir : null;
+	} catch (e) {
+		return e && e.code === 'ENOENT' ? dir : null;
+	}
+}
+
+const UID_SCRATCHPAD = scratchpadUidDir();
 const OUTSIDE_WRITABLE = [
 	{ base: CLAUDE_HOME, pattern: /^projects\/[^/]+\/memory\// },
 	{ base: CLAUDE_HOME, pattern: /^plans\// },
 	{ base: path.join(tmpdir(), 'claude'), pattern: /^/ },
+	...(UID_SCRATCHPAD === null ? [] : [{ base: UID_SCRATCHPAD, pattern: /^/ }]),
 ];
 
 function block(reason) {

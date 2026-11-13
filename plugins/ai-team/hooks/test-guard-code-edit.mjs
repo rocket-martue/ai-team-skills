@@ -5,7 +5,7 @@
 // git は呼ばない。依存なし。
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ const hook = path.join(here, 'guard-code-edit.mjs');
 const settingsPath = path.join(here, '..', '..', '..', 'repo-files', 'claude', 'settings.json');
 const hooksJsonPath = path.join(here, 'hooks.json');
 
-// 仮のリポジトリ。一時ディレクトリの claude/ の下は scratchpad として通るので、避けた名前にする。
+// 仮のリポジトリ。一時ディレクトリの claude/ と claude-<uid>/ の下は scratchpad として通るので、避けた名前にする。
 const sandbox = mkdtempSync(path.join(tmpdir(), 'guard-test-'));
 const project = path.join(sandbox, 'repo');
 const outside = path.join(sandbox, 'elsewhere');
@@ -61,6 +61,16 @@ const trySymlink = (target, linkPath, type) => {
 		return true;
 	} catch {
 		return false;
+	}
+};
+
+// そこに何も無い（リンク切れを含めて）ことを lstat で見る
+const lstatAbsent = (q) => {
+	try {
+		lstatSync(q);
+		return false;
+	} catch (e) {
+		return e.code === 'ENOENT';
 	}
 };
 
@@ -119,6 +129,35 @@ try {
 	run('外: ~/.claude/settings.json は止まる', { file: path.join(homedir(), '.claude', 'settings.json') }, 2);
 	run('外: ~/.claude/skills/ は止まる', { file: path.join(homedir(), '.claude', 'skills', 's', 'SKILL.md') }, 2);
 	run('外: scratchpad の中でも .env は止まる', { file: path.join(tmpdir(), 'claude', '.env') }, 2);
+	// uid がある環境（Mac・Linux）の scratchpad は <一時ディレクトリ>/claude-<uid>/。uid が無い環境（Windows）では claude-0 は今までどおり止まる
+	const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+	if (uid !== null) {
+		run('外: scratchpad（claude-<uid>）は通る', { file: path.join(tmpdir(), `claude-${uid}`, 'a.txt') }, 0);
+		run('外: claude-<uid> の中の .env は止まる', { file: path.join(tmpdir(), `claude-${uid}`, '.env') }, 2);
+		run('外: 別の uid の claude-<uid+1> は止まる', { file: path.join(tmpdir(), `claude-${uid + 1}`, 'a.txt') }, 2);
+	} else {
+		run('外: uid が無い環境では claude-0 は止まる', { file: path.join(tmpdir(), 'claude-0', 'a.txt') }, 2);
+	}
+	run('外: claude-x は止まる', { file: path.join(tmpdir(), 'claude-x', 'a.txt') }, 2);
+	run('外: claudex は止まる', { file: path.join(tmpdir(), 'claudex', 'a.txt') }, 2);
+	// claude-<uid> が、ほかのフォルダへのリンクのとき（/tmp は共有なので、ほかのユーザーが先に作れる。リンク先が丸ごと通らないように）。
+	// <一時ディレクトリ>/claude-<uid> がまだ無いときだけ作り、確かめたら必ず消す。元からある環境では作らずに飛ばす
+	if (uid !== null) {
+		const uidLink = path.join(tmpdir(), `claude-${uid}`);
+		if (lstatAbsent(uidLink)) {
+			if (trySymlink(outside, uidLink, 'dir')) {
+				try {
+					run('外: claude-<uid> がほかのフォルダへのリンクなら、リンク先の中も止まる', { file: path.join(uidLink, 'a.txt') }, 2);
+				} finally {
+					unlinkSync(uidLink);
+				}
+			} else {
+				console.log('skip claude-<uid> がリンクのときの確かめ（リンクを作れない環境）');
+			}
+		} else {
+			console.log('skip claude-<uid> がリンクのときの確かめ（claude-<uid> が元からある環境では作らない）');
+		}
+	}
 	runRaw('JSON でない入力は止まる', 'not json', 2);
 	// 思わぬ形の入力は止まる（例外で終了コード 1 になると、Claude Code は編集を通すため。#108）
 	runRaw('入力が JSON の null なら止まる', 'null', 2);
@@ -515,6 +554,9 @@ try {
 			run(`設定が壊れている（${label}）: .md も止まる`, { file: p('docs', 'tasks', 'x', 'plan.md') }, 2);
 			run(`設定が壊れている（${label}）: メジェドのコードも止まる`, { file: p('src', 'a.js'), ...MEJED }, 2);
 			run(`設定が壊れている（${label}）: scratchpad も止まる`, { file: path.join(tmpdir(), 'claude', 'a.txt') }, 2);
+			if (uid !== null) {
+				run(`設定が壊れている（${label}）: claude-<uid> の scratchpad も止まる`, { file: path.join(tmpdir(), `claude-${uid}`, 'a.txt') }, 2);
+			}
 			run(`設定が壊れている（${label}）: 設定ファイル自体は通る`, { file: configPath }, 0);
 		});
 	}
